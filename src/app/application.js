@@ -8,11 +8,6 @@ var dwv = dwv || {};
  * @tutorial examples
  */
 dwv.App = function () {
-  // check logger
-  if (typeof dwv.logger === 'undefined') {
-    dwv.logger = dwv.utils.logger.console;
-  }
-
   // closure to self
   var self = this;
 
@@ -38,7 +33,7 @@ dwv.App = function () {
   var undoStack = null;
 
   // Generic style
-  var style = new dwv.html.Style();
+  var style = new dwv.gui.Style();
 
   /**
    * Listener handler.
@@ -75,30 +70,14 @@ dwv.App = function () {
   };
 
   /**
-   * Is the data mono-slice?
-   *
-   * @returns {boolean} True if the data only contains one slice.
-   */
-  this.isMonoSliceData = function () {
-    return loadController.isMonoSliceData();
-  };
-  /**
-   * Is the data mono-frame?
-   *
-   * @returns {boolean} True if the data only contains one frame.
-   */
-  this.isMonoFrameData = function () {
-    var viewLayer = layerController.getActiveViewLayer();
-    var controller = viewLayer.getViewController();
-    return controller.isMonoFrameData();
-  };
-  /**
    * Can the data be scrolled?
    *
-   * @returns {boolean} True if the data has more than one slice or frame.
+   * @returns {boolean} True if the data has a third dimension greater than one.
    */
   this.canScroll = function () {
-    return !this.isMonoSliceData() || !this.isMonoFrameData();
+    var viewLayer = layerController.getActiveViewLayer();
+    var controller = viewLayer.getViewController();
+    return controller.canScroll();
   };
 
   /**
@@ -150,6 +129,7 @@ dwv.App = function () {
 
   /**
    * Get the layer controller.
+   * The controller is available after the first loaded item.
    *
    * @returns {object} The controller.
    */
@@ -259,11 +239,11 @@ dwv.App = function () {
         }
       }
       // add tools to the controller
-      toolboxController = new dwv.ToolboxController(toolList);
+      toolboxController = new dwv.ctrl.ToolboxController(toolList);
     }
 
     // create load controller
-    loadController = new dwv.LoadController(options.defaultCharacterSet);
+    loadController = new dwv.ctrl.LoadController(options.defaultCharacterSet);
     loadController.onloadstart = onloadstart;
     loadController.onprogress = onprogress;
     loadController.onloaditem = onloaditem;
@@ -272,13 +252,8 @@ dwv.App = function () {
     loadController.onerror = onerror;
     loadController.onabort = onabort;
 
-    // create layer container
-    // warn: needs the DOM to be loaded...
-    layerController =
-      new dwv.LayerController(self.getElement('layerContainer'));
-
     // create data controller
-    dataController = new dwv.DataController();
+    dataController = new dwv.ctrl.DataController();
   };
 
   /**
@@ -298,7 +273,7 @@ dwv.App = function () {
    * @returns {object} The found element or null.
    */
   this.getElement = function (name) {
-    return dwv.gui.getElement(options.containerDivId, name);
+    return dwv.getElement(options.containerDivId, name);
   };
 
   /**
@@ -412,10 +387,14 @@ dwv.App = function () {
    * Fit the display to the given size. To be called once the image is loaded.
    */
   this.fitToContainer = function () {
-    layerController.fitToContainer();
-    layerController.draw();
-    // update style
-    style.setBaseScale(layerController.getBaseScale());
+    if (layerController) {
+      layerController.fitToContainer(
+        self.getImage().getGeometry().getSpacing()
+      );
+      layerController.draw();
+      // update style
+      style.setBaseScale(layerController.getBaseScale());
+    }
   };
 
   /**
@@ -431,6 +410,22 @@ dwv.App = function () {
    * Render the current data.
    */
   this.render = function () {
+
+    // create layer controller if not done yet
+    // warn: needs a loaded DOM
+    if (!layerController) {
+      layerController =
+        new dwv.ctrl.LayerController(self.getElement('layerContainer'));
+      // initialise or add view
+      var dataIndex = dataController.getCurrentIndex();
+      var data = dataController.get(dataIndex);
+      if (layerController.getNumberOfLayers() === 0) {
+        initialiseBaseLayers(data.image, data.meta, dataIndex);
+      } else {
+        addViewLayer(data.image, data.meta, dataIndex);
+      }
+    }
+
     layerController.draw();
   };
 
@@ -471,7 +466,7 @@ dwv.App = function () {
   /**
    * Get the list of drawing display details.
    *
-   * @returns {object} The list of draw details including id, slice, frame...
+   * @returns {object} The list of draw details including id, position...
    */
   this.getDrawDisplayDetails = function () {
     var drawController =
@@ -504,9 +499,7 @@ dwv.App = function () {
     drawController.setDrawings(
       drawings, drawingsDetails, fireEvent, this.addToUndoStack);
 
-    drawController.activateDrawLayer(
-      viewController.getCurrentPosition(),
-      viewController.getCurrentFrame());
+    drawController.activateDrawLayer(viewController.getCurrentPosition());
   };
   /**
    * Update a drawing from its details.
@@ -554,7 +547,7 @@ dwv.App = function () {
    * @returns {object} The state of the app as a JSON object.
    */
   this.getState = function () {
-    var state = new dwv.State();
+    var state = new dwv.io.State();
     return state.toJSON(self);
   };
 
@@ -594,10 +587,10 @@ dwv.App = function () {
    * Key down event handler example.
    * - CRTL-Z: undo
    * - CRTL-Y: redo
-   * - CRTL-ARROW_LEFT: next frame
-   * - CRTL-ARROW_UP: next slice
-   * - CRTL-ARROW_RIGHT: previous frame
-   * - CRTL-ARROW_DOWN: previous slice
+   * - CRTL-ARROW_LEFT: next element on fourth dim
+   * - CRTL-ARROW_UP: next element on third dim
+   * - CRTL-ARROW_RIGHT: previous element on fourth dim
+   * - CRTL-ARROW_DOWN: previous element on third dim
    *
    * @param {object} event The key down event.
    * @fires dwv.tool.UndoStack#undo
@@ -606,19 +599,28 @@ dwv.App = function () {
   this.defaultOnKeydown = function (event) {
     var viewController =
       layerController.getActiveViewLayer().getViewController();
+    var size = self.getImage().getGeometry().getSize();
     if (event.ctrlKey) {
       if (event.keyCode === 37) { // crtl-arrow-left
         event.preventDefault();
-        viewController.decrementFrameNb();
+        if (size.canScroll(3)) {
+          viewController.decrementIndex(3);
+        }
       } else if (event.keyCode === 38) { // crtl-arrow-up
         event.preventDefault();
-        viewController.incrementSliceNb();
+        if (size.canScroll(2)) {
+          viewController.incrementIndex(2);
+        }
       } else if (event.keyCode === 39) { // crtl-arrow-right
         event.preventDefault();
-        viewController.incrementFrameNb();
+        if (size.canScroll(3)) {
+          viewController.incrementIndex(3);
+        }
       } else if (event.keyCode === 40) { // crtl-arrow-down
         event.preventDefault();
-        viewController.decrementSliceNb();
+        if (size.canScroll(2)) {
+          viewController.decrementIndex(2);
+        }
       } else if (event.keyCode === 89) { // crtl-y
         undoStack.redo();
       } else if (event.keyCode === 90) { // crtl-z
@@ -847,7 +849,7 @@ dwv.App = function () {
 
       eventMetaData = event.data.info;
     } else if (event.loadtype === 'state') {
-      var state = new dwv.State();
+      var state = new dwv.io.State();
       state.apply(self, state.fromJSON(event.data));
       eventMetaData = 'state';
     }
@@ -872,29 +874,15 @@ dwv.App = function () {
 
     // adapt context
     if (event.loadtype === 'image') {
-      if (isFirstLoadItem) {
-        // initialise or add view
-        var dataIndex = dataController.getCurrentIndex();
-        var data = dataController.get(dataIndex);
-        if (layerController.getNumberOfLayers() === 0) {
-          initialiseBaseLayers(data.image, data.meta, dataIndex);
-        } else {
-          addViewLayer(data.image, data.meta, dataIndex);
-        }
-      } else {
-        // update slice number if new slice was inserted before
+      // update view current position if new slice was inserted before
+      if (layerController) {
         var controller =
           layerController.getActiveViewLayer().getViewController();
         var currentPosition = controller.getCurrentPosition();
-        if (sliceNb <= currentPosition.k) {
-          controller.setCurrentPosition({
-            i: currentPosition.i,
-            j: currentPosition.j,
-            k: currentPosition.k + 1
-          }, true);
+        if (sliceNb <= currentPosition.get(2)) {
+          controller.incrementIndex(2, true);
         }
       }
-
       // render if flag allows
       if (isFirstLoadItem && options.viewOnFirstLoadItem) {
         self.render();
@@ -994,7 +982,7 @@ dwv.App = function () {
   /**
    * Bind view layer events to app.
    *
-   * @param {object} viewLayer The active view layer.
+   * @param {object} viewLayer The view layer.
    * @private
    */
   function bindViewLayer(viewLayer) {
@@ -1006,6 +994,23 @@ dwv.App = function () {
     // propagate viewLayer events
     viewLayer.addEventListener('renderstart', fireEvent);
     viewLayer.addEventListener('renderend', fireEvent);
+  }
+
+  /**
+   * Un-Bind view layer events from app.
+   *
+   * @param {object} viewLayer The view layer.
+   * @private
+   */
+  function unbindViewLayer(viewLayer) {
+    // stop propagating view events
+    viewLayer.propagateViewEvents(false);
+    for (var j = 0; j < dwv.image.viewEventNames.length; ++j) {
+      viewLayer.removeEventListener(dwv.image.viewEventNames[j], fireEvent);
+    }
+    // stop propagating viewLayer events
+    viewLayer.removeEventListener('renderstart', fireEvent);
+    viewLayer.removeEventListener('renderend', fireEvent);
   }
 
   /**
@@ -1053,6 +1058,9 @@ dwv.App = function () {
    * @param {number} dataIndex The data index.
    */
   function addViewLayer(image, meta, dataIndex) {
+    // un-bind previous
+    unbindViewLayer(layerController.getActiveViewLayer());
+
     var viewLayer = layerController.addViewLayer();
     // initialise
     viewLayer.initialise(image, meta, dataIndex);
@@ -1060,6 +1068,9 @@ dwv.App = function () {
     viewLayer.resize(layerController.getScale());
     // listen to image changes
     dataController.addEventListener('imagechange', viewLayer.onimagechange);
+
+    // bind new
+    bindViewLayer(viewLayer);
   }
 
 };

@@ -58,6 +58,7 @@ dwv.tool.Scroll = function (app) {
     var layerController = app.getLayerController();
     var viewController =
       layerController.getActiveViewLayer().getViewController();
+    var size = app.getImage().getGeometry().getSize();
 
     // difference to last Y position
     var diffY = event._y - self.y0;
@@ -66,9 +67,9 @@ dwv.tool.Scroll = function (app) {
     if (yMove) {
       // update view controller
       if (diffY > 0) {
-        viewController.decrementSliceNb();
+        viewController.decrementScrollIndex();
       } else {
-        viewController.incrementSliceNb();
+        viewController.incrementScrollIndex();
       }
     }
 
@@ -76,12 +77,12 @@ dwv.tool.Scroll = function (app) {
     var diffX = event._x - self.x0;
     var xMove = (Math.abs(diffX) > 15);
     // do not trigger for small moves
-    if (xMove) {
+    if (xMove && size.canScroll(3)) {
       // update view controller
       if (diffX > 0) {
-        viewController.incrementFrameNb();
+        viewController.decrementIndex(3);
       } else {
-        viewController.decrementFrameNb();
+        viewController.incrementIndex(3);
       }
     }
 
@@ -158,27 +159,12 @@ dwv.tool.Scroll = function (app) {
   };
 
   /**
-   * Handle mouse scroll event (fired by Firefox).
-   *
-   * @param {object} event The mouse scroll event.
-   */
-  this.DOMMouseScroll = function (event) {
-    // ev.detail on firefox is 3
-    if (event.detail < 0) {
-      mouseScroll(true);
-    } else {
-      mouseScroll(false);
-    }
-  };
-
-  /**
    * Handle mouse wheel event.
    *
    * @param {object} event The mouse wheel event.
    */
-  this.mousewheel = function (event) {
-    // ev.wheelDelta on chrome is 120
-    if (event.wheelDelta > 0) {
+  this.wheel = function (event) {
+    if (event.deltaY < 0) {
       mouseScroll(true);
     } else {
       mouseScroll(false);
@@ -195,22 +181,10 @@ dwv.tool.Scroll = function (app) {
     var layerController = app.getLayerController();
     var viewController =
       layerController.getActiveViewLayer().getViewController();
-
-    var hasSlices =
-      (app.getImage().getGeometry().getSize().getNumberOfSlices() !== 1);
-    var hasFrames = (app.getImage().getNumberOfFrames() !== 1);
     if (up) {
-      if (hasSlices) {
-        viewController.incrementSliceNb();
-      } else if (hasFrames) {
-        viewController.incrementFrameNb();
-      }
+      viewController.incrementScrollIndex();
     } else {
-      if (hasSlices) {
-        viewController.decrementSliceNb();
-      } else if (hasFrames) {
-        viewController.decrementFrameNb();
-      }
+      viewController.decrementScrollIndex();
     }
   }
 

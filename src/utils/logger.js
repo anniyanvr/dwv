@@ -2,15 +2,22 @@
 var dwv = dwv || {};
 /** @namespace */
 dwv.utils = dwv.utils || {};
+/** @namespace */
 dwv.utils.logger = dwv.utils.logger || {};
+/** @namespace */
 dwv.utils.logger.console = dwv.utils.logger.console || {};
 
 /**
- * The dwv code uses `dwv.logger.[trace, debug, info...]` to log text at
- * different levels.
+ * Main logger namespace. Defaults to the console logger.
+ *
+ * @see dwv.utils.logger.console
  */
+dwv.logger = dwv.utils.logger.console;
 
-// available log levels
+/**
+ * Available log levels.
+ * Note: need to activate verbose level in Chrome console to see DEBUG messages.
+ */
 dwv.utils.logger.levels = {
   TRACE: 0,
   DEBUG: 1,

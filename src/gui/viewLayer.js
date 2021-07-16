@@ -1,6 +1,6 @@
 // namespaces
 var dwv = dwv || {};
-dwv.html = dwv.html || {};
+dwv.gui = dwv.gui || {};
 
 /**
  * View layer.
@@ -8,7 +8,7 @@ dwv.html = dwv.html || {};
  * @param {object} containerDiv The layer div.
  * @class
  */
-dwv.html.ViewLayer = function (containerDiv) {
+dwv.gui.ViewLayer = function (containerDiv) {
 
   // specific css class name
   containerDiv.className += ' viewLayer';
@@ -211,8 +211,8 @@ dwv.html.ViewLayer = function (containerDiv) {
    */
   this.resize = function (newScale) {
     // resize canvas
-    canvas.width = parseInt(layerSize.x * newScale.x, 10);
-    canvas.height = parseInt(layerSize.y * newScale.y, 10);
+    canvas.width = Math.floor(layerSize.x * newScale.x);
+    canvas.height = Math.floor(layerSize.y * newScale.y);
     // set scale
     this.setScale(newScale);
   };
@@ -311,7 +311,7 @@ dwv.html.ViewLayer = function (containerDiv) {
   this.initialise = function (image, metaData, index) {
     dataIndex = index;
     // create view
-    var viewFactory = new dwv.image.ViewFactory();
+    var viewFactory = new dwv.ViewFactory();
     view = viewFactory.create(
       new dwv.dicom.DicomElementsWrapper(metaData),
       image);
@@ -320,18 +320,14 @@ dwv.html.ViewLayer = function (containerDiv) {
     view.addEventListener('wlwidthchange', onWLChange);
     view.addEventListener('wlcenterchange', onWLChange);
     view.addEventListener('colourchange', onColourChange);
-    view.addEventListener('slicechange', onSliceChange);
-    view.addEventListener('framechange', onFrameChange);
+    view.addEventListener('positionchange', onPositionChange);
 
     // create view controller
-    viewController = new dwv.ViewController(view);
+    viewController = new dwv.ctrl.ViewController(view);
 
     // get sizes
     var size = image.getGeometry().getSize();
-    layerSize = {
-      x: size.getNumberOfColumns(),
-      y: size.getNumberOfRows()
-    };
+    layerSize = size.get2D();
 
     // create canvas
     canvas = document.createElement('canvas');
@@ -478,29 +474,19 @@ dwv.html.ViewLayer = function (containerDiv) {
   }
 
   /**
-   * Handle frame change.
+   * Handle position change.
    *
-   * @param {object} event The event fired when changing the frame.
+   * @param {object} event The event fired when changing the position.
    * @private
    */
-  function onFrameChange(event) {
-    // generate and draw if no skip flag
+  function onPositionChange(event) {
     if (typeof event.skipGenerate === 'undefined' ||
       event.skipGenerate === false) {
-      needsDataUpdate = true;
-      self.draw();
+      if (event.diffDims.includes(2) || event.diffDims.includes(3)) {
+        needsDataUpdate = true;
+        self.draw();
+      }
     }
-  }
-
-  /**
-   * Handle slice change.
-   *
-   * @param {object} _event The event fired when changing the slice.
-   * @private
-   */
-  function onSliceChange(_event) {
-    needsDataUpdate = true;
-    self.draw();
   }
 
   /**
@@ -515,7 +501,7 @@ dwv.html.ViewLayer = function (containerDiv) {
   /**
    * Align on another layer.
    *
-   * @param {dwv.html.ViewLayer} rhs The layer to align on.
+   * @param {dwv.gui.ViewLayer} rhs The layer to align on.
    */
   this.align = function (rhs) {
     canvas.style.top = rhs.getCanvas().offsetTop;

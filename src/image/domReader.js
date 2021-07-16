@@ -39,7 +39,7 @@ dwv.image.getDefaultImage = function (
   imageBuffer, numberOfFrames,
   imageUid) {
   // image size
-  var imageSize = new dwv.image.Size(width, height);
+  var imageSize = new dwv.image.Size([width, height, 1]);
   // default spacing
   // TODO: misleading...
   var imageSpacing = new dwv.image.Spacing(1, 1);
@@ -47,12 +47,14 @@ dwv.image.getDefaultImage = function (
   var origin = new dwv.math.Point3D(0, 0, sliceIndex);
   // create image
   var geometry = new dwv.image.Geometry(origin, imageSize, imageSpacing);
-  var image = new dwv.image.Image(
-    geometry, imageBuffer, numberOfFrames, [imageUid]);
+  var image = new dwv.image.Image(geometry, imageBuffer, [imageUid]);
   image.setPhotometricInterpretation('RGB');
   // meta information
   var meta = {};
   meta.BitsStored = 8;
+  if (typeof numberOfFrames !== 'undefined') {
+    meta.numberOfFiles = numberOfFrames;
+  }
   image.setMeta(meta);
   // return
   return image;
@@ -80,26 +82,24 @@ dwv.image.getViewFromDOMImage = function (domImage, origin) {
   var imageData = ctx.getImageData(0, 0, width, height);
 
   // image properties
-  var info = [];
+  var info = {};
   if (typeof domImage.origin === 'string') {
-    info.push({name: 'origin', value: domImage.origin});
+    info['origin'] = {value: domImage.origin};
   } else {
-    info.push({name: 'fileName', value: domImage.origin.name});
-    info.push({name: 'fileType', value: domImage.origin.type});
-    info.push({
-      name: 'fileLastModifiedDate', value: domImage.origin.lastModifiedDate
-    });
+    info['fileName'] = {value: domImage.origin.name};
+    info['fileType'] = {value: domImage.origin.type};
+    info['fileLastModifiedDate'] = {value: domImage.origin.lastModifiedDate};
   }
-  info.push({name: 'imageWidth', value: width});
-  info.push({name: 'imageHeight', value: height});
+  info['imageWidth'] = {value: width};
+  info['imageHeight'] = {value: height};
 
   var sliceIndex = domImage.index ? domImage.index : 0;
-  info.push({name: 'imageUid', value: sliceIndex});
+  info['imageUid'] = {value: sliceIndex};
 
   // create view
   var imageBuffer = dwv.image.imageDataToBuffer(imageData);
   var image = dwv.image.getDefaultImage(
-    width, height, sliceIndex, [imageBuffer], 1, sliceIndex);
+    width, height, sliceIndex, imageBuffer, 1, sliceIndex);
 
   // return
   return {
@@ -132,20 +132,19 @@ dwv.image.getViewFromDOMVideo = function (
   // default frame rate...
   var frameRate = 30;
   // number of frames
-  var numberOfFrames = Math.floor(video.duration * frameRate);
+  var numberOfFrames = Math.ceil(video.duration * frameRate);
 
   // video properties
-  var info = [];
+  var info = {};
   if (video.file) {
-    info.push({name: 'fileName', value: video.file.name});
-    info.push({name: 'fileType', value: video.file.type});
-    info.push({
-      name: 'fileLastModifiedDate', value: video.file.lastModifiedDate
-    });
+    info['fileName'] = {value: video.file.name};
+    info['fileType'] = {value: video.file.type};
+    info['fileLastModifiedDate'] = {value: video.file.lastModifiedDate};
   }
-  info.push({name: 'imageWidth', value: width});
-  info.push({name: 'imageHeight', value: height});
-  info.push({name: 'numberOfFrames', value: numberOfFrames});
+  info['imageWidth'] = {value: width};
+  info['imageHeight'] = {value: height};
+  info['numberOfFrames'] = {value: numberOfFrames};
+  info['imageUid'] = {value: 0};
 
   // draw the image in the canvas in order to get its data
   var canvas = document.createElement('canvas');
@@ -181,7 +180,7 @@ dwv.image.getViewFromDOMVideo = function (
     if (frameIndex === 0) {
       // create view
       image = dwv.image.getDefaultImage(
-        width, height, 1, [imgBuffer], numberOfFrames, dataIndex);
+        width, height, 1, imgBuffer, numberOfFrames, dataIndex);
       // call callback
       onloaditem({
         data: {
@@ -191,7 +190,7 @@ dwv.image.getViewFromDOMVideo = function (
         source: origin
       });
     } else {
-      image.appendFrameBuffer(imgBuffer);
+      image.appendFrameBuffer(imgBuffer, frameIndex);
     }
     // increment index
     ++frameIndex;

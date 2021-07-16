@@ -1,20 +1,7 @@
 // namespaces
 var dwv = dwv || {};
+dwv.ctrl = dwv.ctrl || {};
 dwv.gui = dwv.gui || {};
-dwv.html = dwv.html || {};
-
-dwv.gui.interactionEventNames = [
-  'mousedown',
-  'mousemove',
-  'mouseup',
-  'mouseout',
-  'mousewheel',
-  'DOMMouseScroll',
-  'dblclick',
-  'touchstart',
-  'touchmove',
-  'touchend'
-];
 
 /**
  * Layer controller.
@@ -22,7 +9,7 @@ dwv.gui.interactionEventNames = [
  * @param {object} containerDiv The layer div.
  * @class
  */
-dwv.LayerController = function (containerDiv) {
+dwv.ctrl.LayerController = function (containerDiv) {
 
   var layers = [];
 
@@ -56,7 +43,7 @@ dwv.LayerController = function (containerDiv) {
    * @private
    * @type {object}
    */
-  var layerSize;
+  var layerSize = dwv.gui.getDivSize(containerDiv);
 
   /**
    * Active view layer index.
@@ -144,12 +131,43 @@ dwv.LayerController = function (containerDiv) {
   };
 
   /**
+   * Get the active image layer.
+   *
+   * @returns {object} The layer.
+   */
+  this.getActiveViewLayer = function () {
+    return layers[activeViewLayerIndex];
+  };
+
+  /**
+   * Get the active draw layer.
+   *
+   * @returns {object} The layer.
+   */
+  this.getActiveDrawLayer = function () {
+    return layers[activeDrawLayerIndex];
+  };
+
+  /**
    * Set the active view layer.
    *
    * @param {number} index The index of the layer to set as active.
    */
   this.setActiveViewLayer = function (index) {
+    // un-bind previous layer
+    var viewLayer0 = this.getActiveViewLayer();
+    if (viewLayer0) {
+      viewLayer0.removeEventListener(
+        'postitionchange', this.updatePosition);
+    }
+
+    // set index
     activeViewLayerIndex = index;
+
+    // bind new layer
+    var viewLayer = this.getActiveViewLayer();
+    viewLayer.addEventListener(
+      'postitionchange', this.updatePosition);
   };
 
   /**
@@ -167,18 +185,20 @@ dwv.LayerController = function (containerDiv) {
    * @returns {object} The created layer.
    */
   this.addViewLayer = function () {
-    // store active index
-    activeViewLayerIndex = layers.length;
+    // layer index
+    var viewLayerIndex = layers.length;
     // create div
     var div = getNextLayerDiv();
     // prepend to container
     containerDiv.append(div);
     // view layer
-    var layer = new dwv.html.ViewLayer(div);
+    var layer = new dwv.gui.ViewLayer(div);
     // set z-index: last on top
-    layer.setZIndex(activeViewLayerIndex);
+    layer.setZIndex(viewLayerIndex);
     // add layer
     layers.push(layer);
+    // mark it as active
+    this.setActiveViewLayer(viewLayerIndex);
     // return
     return layer;
   };
@@ -196,9 +216,9 @@ dwv.LayerController = function (containerDiv) {
     // prepend to container
     containerDiv.append(div);
     // draw layer
-    var layer = new dwv.html.DrawLayer(div);
+    var layer = new dwv.gui.DrawLayer(div);
     // set z-index: above view + last on top
-    layer.setZIndex(50 + activeDrawLayerIndex);
+    layer.setZIndex(10 + activeDrawLayerIndex);
     // add layer
     layers.push(layer);
     // return
@@ -236,24 +256,6 @@ dwv.LayerController = function (containerDiv) {
   };
 
   /**
-   * Get the active image layer.
-   *
-   * @returns {object} The layer.
-   */
-  this.getActiveViewLayer = function () {
-    return layers[activeViewLayerIndex];
-  };
-
-  /**
-   * Get the active draw layer.
-   *
-   * @returns {object} The layer.
-   */
-  this.getActiveDrawLayer = function () {
-    return layers[activeDrawLayerIndex];
-  };
-
-  /**
    * Update draw controller to view position.
    */
   this.updateDrawControllerToViewPosition = function () {
@@ -262,8 +264,7 @@ dwv.LayerController = function (containerDiv) {
       var viewController =
         layers[activeViewLayerIndex].getViewController();
       drawLayer.getDrawController().activateDrawLayer(
-        viewController.getCurrentPosition(),
-        viewController.getCurrentFrame());
+        viewController.getCurrentPosition());
     }
   };
 
@@ -271,25 +272,35 @@ dwv.LayerController = function (containerDiv) {
    * Get the fit to container scale.
    * To be called once the image is loaded.
    *
+   * @param {object} spacing The image spacing.
    * @returns {number} The scale.
    */
-  this.getFitToContainerScale = function () {
+  this.getFitToContainerScale = function (spacing) {
     // get container size
-    var size = this.getLayerContainerSize();
+    var containerSize = this.getLayerContainerSize();
+    var realSize = {
+      x: layerSize.x * spacing.getColumnSpacing(),
+      y: layerSize.y * spacing.getRowSpacing()
+    };
     // best fit
     return Math.min(
-      (size.x / layerSize.x),
-      (size.y / layerSize.y)
+      (containerSize.x / realSize.x),
+      (containerSize.y / realSize.y)
     );
   };
 
   /**
    * Fit the display to the size of the container.
    * To be called once the image is loaded.
+   *
+   * @param {object} spacing The image spacing.
    */
-  this.fitToContainer = function () {
-    var fitScale = this.getFitToContainerScale();
-    this.resize({x: fitScale, y: fitScale});
+  this.fitToContainer = function (spacing) {
+    var fitScale = this.getFitToContainerScale(spacing);
+    this.resize({
+      x: fitScale * spacing.getColumnSpacing(),
+      y: fitScale * spacing.getRowSpacing()
+    });
   };
 
   /**
@@ -298,23 +309,7 @@ dwv.LayerController = function (containerDiv) {
    * @returns {object} The available width and height as {width,height}.
    */
   this.getLayerContainerSize = function () {
-    var parent = containerDiv.parentNode;
-    // offsetHeight: height of an element, including vertical padding
-    // and borders
-    // ref: https://developer.mozilla.org/en-US/docs/Web/API/HTMLElement/offsetHeight
-    var height = parent.offsetHeight;
-    // remove the height of other elements of the container div
-    var kids = parent.children;
-    for (var i = 0; i < kids.length; ++i) {
-      if (!kids[i].classList.contains('layerContainer')) {
-        var styles = window.getComputedStyle(kids[i]);
-        // offsetHeight does not include margin
-        var margin = parseFloat(styles.getPropertyValue('margin-top'), 10) +
-               parseFloat(styles.getPropertyValue('margin-bottom'), 10);
-        height -= (kids[i].offsetHeight + margin);
-      }
-    }
-    return {x: parent.offsetWidth, y: height};
+    return dwv.gui.getDivSize(containerDiv);
   };
 
   /**
@@ -325,8 +320,8 @@ dwv.LayerController = function (containerDiv) {
    */
   this.addScale = function (scaleStep, center) {
     var newScale = {
-      x: Math.max(scale.x + scaleStep, 0.1),
-      y: Math.max(scale.y + scaleStep, 0.1)
+      x: Math.max(scale.x + scale.x * scaleStep, 0.1),
+      y: Math.max(scale.y + scale.y * scaleStep, 0.1)
     };
     // center should stay the same:
     // newOffset + center / newScale = oldOffset + center / oldScale
@@ -341,7 +336,7 @@ dwv.LayerController = function (containerDiv) {
    * Set the layers' scale.
    *
    * @param {object} newScale The scale to apply as {x,y}.
-   * @fires dwv.LayerController#zoomchange
+   * @fires dwv.ctrl.LayerController#zoomchange
    */
   this.setScale = function (newScale) {
     scale = newScale;
@@ -353,7 +348,7 @@ dwv.LayerController = function (containerDiv) {
     /**
      * Zoom change event.
      *
-     * @event dwv.LayerController#zoomchange
+     * @event dwv.ctrl.LayerController#zoomchange
      * @type {object}
      * @property {Array} value The changed value.
      */
@@ -379,7 +374,7 @@ dwv.LayerController = function (containerDiv) {
    * Set the layers' offset.
    *
    * @param {object} newOffset The offset as {x,y}.
-   * @fires dwv.LayerController#offsetchange
+   * @fires dwv.ctrl.LayerController#offsetchange
    */
   this.setOffset = function (newOffset) {
     // store
@@ -392,7 +387,7 @@ dwv.LayerController = function (containerDiv) {
     /**
      * Offset change event.
      *
-     * @event dwv.LayerController#offsetchange
+     * @event dwv.ctrl.LayerController#offsetchange
      * @type {object}
      * @property {Array} value The changed value.
      */
@@ -411,10 +406,7 @@ dwv.LayerController = function (containerDiv) {
    */
   this.initialise = function (image, metaData, dataIndex) {
     var size = image.getGeometry().getSize();
-    layerSize = {
-      x: size.getNumberOfColumns(),
-      y: size.getNumberOfRows()
-    };
+    layerSize = size.get2D();
     // apply to layers
     for (var i = 0; i < layers.length; ++i) {
       layers[i].initialise(image, metaData, dataIndex);
@@ -423,14 +415,13 @@ dwv.LayerController = function (containerDiv) {
     // bind draw to view position
     var viewLayer = this.getActiveViewLayer();
     viewLayer.addEventListener(
-      'slicechange', this.updateDrawControllerToViewPosition);
-    viewLayer.addEventListener(
-      'framechange', this.updateDrawControllerToViewPosition);
+      'positionchange', this.updateDrawControllerToViewPosition);
     // first update
     this.updateDrawControllerToViewPosition();
 
     // fit data
-    this.fitToContainer();
+    var spacing = image.getGeometry().getSpacing();
+    this.fitToContainer(spacing);
   };
 
   /**
@@ -455,15 +446,22 @@ dwv.LayerController = function (containerDiv) {
     baseScale = newScale;
 
     // resize container
-    var width = parseInt(layerSize.x * baseScale.x, 10);
-    var height = parseInt(layerSize.y * baseScale.y, 10);
+    var width = Math.floor(layerSize.x * baseScale.x);
+    var height = Math.floor(layerSize.y * baseScale.y);
     containerDiv.style.width = width + 'px';
     containerDiv.style.height = height + 'px';
 
-    // call resize and scale on layers
-    for (var i = 0; i < layers.length; ++i) {
-      layers[i].resize(baseScale);
-      layers[i].setScale(scale);
+    // resize if test passes
+    if (dwv.gui.canCreateCanvas(width, height)) {
+      // call resize and scale on layers
+      for (var i = 0; i < layers.length; ++i) {
+        layers[i].resize(baseScale);
+        layers[i].setScale(scale);
+      }
+    } else {
+      dwv.logger.warn('Cannot create a ' + width + ' * ' + height +
+        ' canvas, trying half the size...');
+      this.resize({x: newScale.x * 0.5, y: newScale.y * 0.5});
     }
   };
 
@@ -520,64 +518,3 @@ dwv.LayerController = function (containerDiv) {
   }
 
 }; // LayerController class
-
-/**
- * Get the positions (without the parent offset) of a list of touch events.
- *
- * @param {Array} touches The list of touch events.
- * @returns {Array} The list of positions of the touch events.
- */
-dwv.html.getTouchesPositions = function (touches) {
-  // get the touch offset from all its parents
-  var offsetLeft = 0;
-  var offsetTop = 0;
-  if (touches.length !== 0 &&
-    typeof touches[0].target !== 'undefined') {
-    var offsetParent = touches[0].target.offsetParent;
-    while (offsetParent) {
-      if (!isNaN(offsetParent.offsetLeft)) {
-        offsetLeft += offsetParent.offsetLeft;
-      }
-      if (!isNaN(offsetParent.offsetTop)) {
-        offsetTop += offsetParent.offsetTop;
-      }
-      offsetParent = offsetParent.offsetParent;
-    }
-  } else {
-    dwv.logger.debug('No touch target offset parent.');
-  }
-  // set its position
-  var positions = [];
-  for (var i = 0; i < touches.length; ++i) {
-    positions.push({
-      x: touches[i].pageX - offsetLeft,
-      y: touches[i].pageY - offsetTop
-    });
-  }
-  return positions;
-};
-
-/**
- * Get the offset of an input event.
- *
- * @param {object} event The event to get the offset from.
- * @returns {Array} The array of offsets.
- */
-dwv.html.getEventOffset = function (event) {
-  var positions = [];
-  if (typeof event.targetTouches !== 'undefined' &&
-    event.targetTouches.length !== 0) {
-    // see https://developer.mozilla.org/en-US/docs/Web/API/TouchEvent/targetTouches
-    positions = dwv.html.getTouchesPositions(event.targetTouches);
-  } else if (typeof event.changedTouches !== 'undefined' &&
-      event.changedTouches.length !== 0) {
-    // see https://developer.mozilla.org/en-US/docs/Web/API/TouchEvent/changedTouches
-    positions = dwv.html.getTouchesPositions(event.changedTouches);
-  } else {
-    // layerX is used by Firefox
-    var ex = event.offsetX === undefined ? event.layerX : event.offsetX;
-    var ey = event.offsetY === undefined ? event.layerY : event.offsetY;
-    positions.push({x: ex, y: ey});
-  }
-  return positions;
-};

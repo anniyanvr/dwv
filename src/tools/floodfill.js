@@ -129,9 +129,9 @@ dwv.tool.Floodfill = function (app) {
   /**
    * Drawing style.
    *
-   * @type {dwv.html.Style}
+   * @type {dwv.gui.Style}
    */
-  this.style = new dwv.html.Style();
+  this.style = new dwv.gui.Style();
 
   /**
    * Listener handler.
@@ -279,23 +279,23 @@ dwv.tool.Floodfill = function (app) {
     var threshold = currentthreshold || initialthreshold;
 
     // Iterate over the next images and paint border on each slice.
-    for (var i = pos.k,
+    for (var i = pos.get(2),
       len = end
-        ? end : app.getImage().getGeometry().getSize().getNumberOfSlices();
+        ? end : app.getImage().getGeometry().getSize().get(2);
       i < len; i++) {
       if (!paintBorder(initialpoint, threshold)) {
         break;
       }
-      viewController.incrementSliceNb();
+      viewController.incrementIndex(2);
     }
     viewController.setCurrentPosition(pos);
 
     // Iterate over the prev images and paint border on each slice.
-    for (var j = pos.k, jl = ini ? ini : 0; j > jl; j--) {
+    for (var j = pos.get(2), jl = ini ? ini : 0; j > jl; j--) {
       if (!paintBorder(initialpoint, threshold)) {
         break;
       }
-      viewController.decrementSliceNb();
+      viewController.decrementIndex(2);
     }
     viewController.setCurrentPosition(pos);
   };

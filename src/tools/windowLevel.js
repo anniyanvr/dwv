@@ -64,6 +64,8 @@ dwv.tool.WindowLevel = function (app) {
       parseInt(viewController.getWindowLevel().center, 10) + diffY;
     var windowWidth =
       parseInt(viewController.getWindowLevel().width, 10) + diffX;
+    // bound window width
+    windowWidth = dwv.image.validateWindowWidth(windowWidth);
 
     // add the manual preset to the view
     viewController.addWindowLevelPresets({
@@ -140,10 +142,11 @@ dwv.tool.WindowLevel = function (app) {
 
     // update view controller
     viewController.setWindowLevel(
-      parseInt(app.getImage().getRescaledValue(
-        event._x,
-        event._y,
-        viewController.getCurrentPosition().k
+      parseInt(app.getImage().getRescaledValueAtIndex(
+        viewController.getCurrentPosition().getWithNew2D(
+          event._x,
+          event._y
+        )
       ), 10),
       parseInt(viewController.getWindowLevel().width, 10));
   };

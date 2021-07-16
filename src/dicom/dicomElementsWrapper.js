@@ -46,43 +46,82 @@ dwv.dicom.DicomElementsWrapper = function (dicomElements) {
   };
 
   /**
-   * Dump the DICOM tags to an array.
+   * Dump the DICOM tags to an object.
    *
    * @returns {object} The DICOM tags as an object.
    */
   this.dumpToObject = function () {
     var keys = Object.keys(dicomElements);
-    var dict = dwv.dicom.dictionary;
     var obj = {};
     var dicomElement = null;
-    var dictElement = null;
-    var row = null;
     for (var i = 0, leni = keys.length; i < leni; ++i) {
       dicomElement = dicomElements[keys[i]];
-      row = {};
-      // dictionnary entry (to get name)
-      dictElement = null;
-      if (typeof dict[dicomElement.tag.group] !== 'undefined' &&
-          typeof dict[dicomElement.tag.group][dicomElement.tag.element] !==
-          'undefined') {
-        dictElement = dict[dicomElement.tag.group][dicomElement.tag.element];
-      }
-      // name
-      var name = 'Unknown Tag & Data';
-      if (dictElement !== null) {
-        name = dictElement[2];
-      }
-      // value
-      row.value = this.getElementValueAsString(dicomElement);
-      // others
-      row.group = dicomElement.tag.group;
-      row.element = dicomElement.tag.element;
-      row.vr = dicomElement.vr;
-      row.vl = dicomElement.vl;
-
-      obj[name] = row;
+      obj[this.getTagName(dicomElement.tag)] =
+        this.getElementAsObject(dicomElement);
     }
     return obj;
+  };
+
+  /**
+   * Get a tag string name from the dictionary.
+   *
+   * @param {object} tag The DICOM tag object.
+   * @returns {string} The tag name.
+   */
+  this.getTagName = function (tag) {
+    var tagObj = new dwv.dicom.Tag(tag.group, tag.element);
+    var name = tagObj.getNameFromDictionary();
+    if (name === null) {
+      name = 'Unknown Tag & Data';
+    }
+    return name;
+  };
+
+  /**
+   * Get a DICOM element as a simple object.
+   *
+   * @param {object} dicomElement The DICOM element.
+   * @returns {object} The element as a simple object.
+   */
+  this.getElementAsObject = function (dicomElement) {
+    // element value
+    var value = null;
+
+    var isPixel = dicomElement.tag.group === '0x7FE0' &&
+      dicomElement.tag.element === '0x0010';
+
+    var vr = dicomElement.vr;
+    if (vr === 'SQ' &&
+      typeof dicomElement.value !== 'undefined' &&
+      !isPixel) {
+      value = [];
+      var items = dicomElement.value;
+      var itemValues = null;
+      for (var i = 0; i < items.length; ++i) {
+        itemValues = {};
+        var keys = Object.keys(items[i]);
+        for (var k = 0; k < keys.length; ++k) {
+          var itemElement = items[i][keys[k]];
+          var key = this.getTagName(itemElement.tag);
+          // do not inclure Item elements
+          if (key !== 'Item') {
+            itemValues[key] = this.getElementAsObject(itemElement);
+          }
+        }
+        value.push(itemValues);
+      }
+    } else {
+      value = this.getElementValueAsString(dicomElement);
+    }
+
+    // return
+    return {
+      value: value,
+      group: dicomElement.tag.group,
+      element: dicomElement.tag.element,
+      vr: vr,
+      vl: dicomElement.vl
+    };
   };
 
   /**
@@ -251,14 +290,10 @@ dwv.dicom.DicomElementsWrapper.prototype.getElementAsString = function (
   // default prefix
   prefix = prefix || '';
 
-  // get element from dictionary
-  var dict = dwv.dicom.dictionary;
-  var dictElement = null;
-  if (typeof dict[dicomElement.tag.group] !== 'undefined' &&
-      typeof dict[dicomElement.tag.group][dicomElement.tag.element] !==
-      'undefined') {
-    dictElement = dict[dicomElement.tag.group][dicomElement.tag.element];
-  }
+  // get tag anme from dictionary
+  var tag = new dwv.dicom.Tag(
+    dicomElement.tag.group, dicomElement.tag.element);
+  var tagName = tag.getNameFromDictionary();
 
   var deSize = dicomElement.value.length;
   var isOtherVR = (dicomElement.vr[0].toUpperCase() === 'O');
@@ -348,8 +383,8 @@ dwv.dicom.DicomElementsWrapper.prototype.getElementAsString = function (
   line += ', ';
   line += deSize; //dictElement[1];
   line += ' ';
-  if (dictElement !== null) {
-    line += dictElement[2];
+  if (tagName !== null) {
+    line += tagName;
   } else {
     line += 'Unknown Tag & Data';
   }
@@ -449,8 +484,7 @@ dwv.dicom.DicomElementsWrapper.prototype.getElementAsString = function (
  */
 dwv.dicom.DicomElementsWrapper.prototype.getFromGroupElement = function (
   group, element) {
-  return this.getFromKey(
-    dwv.dicom.getGroupElementKey(group, element));
+  return this.getFromKey(new dwv.dicom.Tag(group, element).getKey());
 };
 
 /**
@@ -462,14 +496,49 @@ dwv.dicom.DicomElementsWrapper.prototype.getFromGroupElement = function (
  */
 dwv.dicom.DicomElementsWrapper.prototype.getFromName = function (name) {
   var value = null;
-  var tagGE = dwv.dicom.getGroupElementFromName(name);
+  var tag = dwv.dicom.getTagFromDictionary(name);
   // check that we are not at the end of the dictionary
-  if (tagGE.group !== null && tagGE.element !== null) {
-    value = this.getFromKey(
-      dwv.dicom.getGroupElementKey(tagGE.group, tagGE.element)
-    );
+  if (tag !== null) {
+    value = this.getFromKey(tag.getKey());
   }
   return value;
+};
+
+/**
+ * Get the pixel spacing from the different spacing tags.
+ *
+ * @returns {object} The read spacing or the default [1,1].
+ */
+dwv.dicom.DicomElementsWrapper.prototype.getPixelSpacing = function () {
+  // default
+  var rowSpacing = 1;
+  var columnSpacing = 1;
+
+  // 1. PixelSpacing
+  // 2. ImagerPixelSpacing
+  // 3. NominalScannedPixelSpacing
+  // 4. PixelAspectRatio
+  var keys = ['x00280030', 'x00181164', 'x00182010', 'x00280034'];
+  for (var k = 0; k < keys.length; ++k) {
+    var spacing = this.getFromKey(keys[k], true);
+    if (spacing && spacing.length === 2) {
+      rowSpacing = parseFloat(spacing[0]);
+      columnSpacing = parseFloat(spacing[1]);
+      break;
+    }
+  }
+
+  // check
+  if (columnSpacing === 0) {
+    dwv.logger.warn('Zero column spacing.');
+    columnSpacing = 1;
+  }
+  if (rowSpacing === 0) {
+    dwv.logger.warn('Zero row spacing.');
+    rowSpacing = 1;
+  }
+  // return
+  return new dwv.image.Spacing(columnSpacing, rowSpacing);
 };
 
 /**

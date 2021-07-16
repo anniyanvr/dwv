@@ -15,10 +15,8 @@ dwv.image.decoderScripts = {
   rle: '../../decoders/dwv/decode-rle.js'
 };
 
-// get element
-dwv.gui.getElement = dwv.gui.base.getElement;
-// set logger (optional)
-dwv.logger = dwv.utils.logger.console;
+// logger level (optional)
+dwv.logger.level = dwv.utils.logger.levels.DEBUG;
 
 // check environment support
 dwv.env.check();

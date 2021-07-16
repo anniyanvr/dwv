@@ -8,8 +8,8 @@ dwv.image.decoderScripts = {
   'jpeg-baseline': '../../decoders/pdfjs/decode-jpegbaseline.js',
   rle: '../../decoders/dwv/decode-rle.js'
 };
-// get element
-dwv.gui.getElement = dwv.gui.base.getElement;
+// logger level (optional)
+dwv.logger.level = dwv.utils.logger.levels.DEBUG;
 
 var _app = null;
 

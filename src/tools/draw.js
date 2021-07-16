@@ -20,7 +20,7 @@ dwv.tool.draw.debug = false;
  * This tool is responsible for the draw layer group structure. The layout is:
  *
  * drawLayer
- * |_ positionGroup: name="position-group", id="slice-#_frame-#""
+ * |_ positionGroup: name="position-group", id="#2-0#_#3-1""
  *    |_ shapeGroup: name="{shape name}-group", id="#"
  *       |_ shape: name="shape"
  *       |_ label: name="label"
@@ -144,7 +144,7 @@ dwv.tool.Draw = function (app) {
   /**
    * Drawing style.
    *
-   * @type {dwv.html.Style}
+   * @type {dwv.gui.Style}
    */
   this.style = app.getStyle();
 
@@ -487,16 +487,14 @@ dwv.tool.Draw = function (app) {
     activateCurrentPositionShapes(flag);
     // listen to app change to update the draw layer
     if (flag) {
-      app.addEventListener('slicechange', updateDrawLayer);
-      app.addEventListener('framechange', updateDrawLayer);
+      app.addEventListener('positionchange', updateDrawLayer);
 
       // init with the app window scale
       this.style.setBaseScale(app.getBaseScale());
       // same for colour
       this.setLineColour(this.style.getLineColour());
     } else {
-      app.removeEventListener('slicechange', updateDrawLayer);
-      app.removeEventListener('framechange', updateDrawLayer);
+      app.removeEventListener('positionchange', updateDrawLayer);
     }
   };
 
@@ -624,7 +622,7 @@ dwv.tool.Draw = function (app) {
       // validate the group position
       dwv.tool.validateGroupPosition(drawLayer.getSize(), this);
       // highlight trash when on it
-      var offset = dwv.html.getEventOffset(event.evt)[0];
+      var offset = dwv.gui.getEventOffset(event.evt)[0];
       var eventPos = getRealPosition(offset);
       var trashHalfWidth = trash.width() * trash.scaleX() / 2;
       var trashHalfHeight = trash.height() * trash.scaleY() / 2;
@@ -659,7 +657,7 @@ dwv.tool.Draw = function (app) {
       // remove trash
       trash.remove();
       // delete case
-      var offset = dwv.html.getEventOffset(event.evt)[0];
+      var offset = dwv.gui.getEventOffset(event.evt)[0];
       var eventPos = getRealPosition(offset);
       var trashHalfWidth = trash.width() * trash.scaleX() / 2;
       var trashHalfHeight = trash.height() * trash.scaleY() / 2;
@@ -728,6 +726,8 @@ dwv.tool.Draw = function (app) {
         // update text expression
         ktext.setText(dwv.utils.replaceFlags(
           ktext.meta.textExpr, ktext.meta.quantification));
+        label.setVisible(ktext.meta.textExpr.length !== 0);
+
         // trigger event
         fireEvent({
           type: 'drawchange'
@@ -737,11 +737,11 @@ dwv.tool.Draw = function (app) {
       };
 
       // call client dialog if defined
-      if (typeof dwv.gui.openRoiDialog !== 'undefined') {
-        dwv.gui.openRoiDialog(ktext.meta, onSaveCallback);
+      if (typeof dwv.openRoiDialog !== 'undefined') {
+        dwv.openRoiDialog(ktext.meta, onSaveCallback);
       } else {
         // simple prompt for the text expression
-        var textExpr = prompt('Label', ktext.meta.textExpr);
+        var textExpr = dwv.prompt('Label', ktext.meta.textExpr);
         if (textExpr !== null) {
           ktext.meta.textExpr = textExpr;
           onSaveCallback(ktext.meta);

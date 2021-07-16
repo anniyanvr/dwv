@@ -1,5 +1,6 @@
 // namespaces
 var dwv = dwv || {};
+dwv.ctrl = dwv.ctrl || {};
 
 /**
  * Toolbox controller.
@@ -7,7 +8,7 @@ var dwv = dwv || {};
  * @param {Array} toolList The list of tool objects.
  * @class
  */
-dwv.ToolboxController = function (toolList) {
+dwv.ctrl.ToolboxController = function (toolList) {
   /**
    * Point converter function
    *
@@ -195,9 +196,9 @@ dwv.ToolboxController = function (toolList) {
     var offsets = null;
     var position = null;
     if (event.type === 'touchstart' ||
-            event.type === 'touchmove') {
+      event.type === 'touchmove') {
       // event offset(s)
-      offsets = dwv.html.getEventOffset(event);
+      offsets = dwv.gui.getEventOffset(event);
       // should have at least one offset
       event._xs = offsets[0].x;
       event._ys = offsets[0].y;
@@ -215,13 +216,12 @@ dwv.ToolboxController = function (toolList) {
       // set handle event flag
       handled = true;
     } else if (event.type === 'mousemove' ||
-            event.type === 'mousedown' ||
-            event.type === 'mouseup' ||
-            event.type === 'mouseout' ||
-            event.type === 'mousewheel' ||
-            event.type === 'dblclick' ||
-            event.type === 'DOMMouseScroll') {
-      offsets = dwv.html.getEventOffset(event);
+      event.type === 'mousedown' ||
+      event.type === 'mouseup' ||
+      event.type === 'mouseout' ||
+      event.type === 'wheel' ||
+      event.type === 'dblclick') {
+      offsets = dwv.gui.getEventOffset(event);
       event._xs = offsets[0].x;
       event._ys = offsets[0].y;
       position = displayToIndexConverter(offsets[0]);
@@ -230,7 +230,7 @@ dwv.ToolboxController = function (toolList) {
       // set handle event flag
       handled = true;
     } else if (event.type === 'keydown' ||
-                event.type === 'touchend') {
+      event.type === 'touchend') {
       handled = true;
     }
 
@@ -246,4 +246,4 @@ dwv.ToolboxController = function (toolList) {
     }
   }
 
-}; // class dwv.ToolboxController
+}; // class ToolboxController

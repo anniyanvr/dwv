@@ -1,6 +1,7 @@
 // namespaces
 var dwv = dwv || {};
-dwv.html = dwv.html || {};
+/** @namespace */
+dwv.gui = dwv.gui || {};
 
 /**
  * The Konva namespace.
@@ -16,7 +17,7 @@ var Konva = Konva || {};
  * @param {object} containerDiv The layer div.
  * @class
  */
-dwv.html.DrawLayer = function (containerDiv) {
+dwv.gui.DrawLayer = function (containerDiv) {
 
   // specific css class name
   containerDiv.className += ' drawLayer';
@@ -142,8 +143,8 @@ dwv.html.DrawLayer = function (containerDiv) {
    */
   this.resize = function (newScale) {
     // resize stage
-    konvaStage.setWidth(parseInt(layerSize.x * newScale.x, 10));
-    konvaStage.setHeight(parseInt(layerSize.y * newScale.y, 10));
+    konvaStage.setWidth(Math.floor(layerSize.x * newScale.x));
+    konvaStage.setHeight(Math.floor(layerSize.y * newScale.y));
     // set scale
     this.setScale(newScale);
   };
@@ -183,10 +184,7 @@ dwv.html.DrawLayer = function (containerDiv) {
   this.initialise = function (image, _metaData) {
     // get sizes
     var size = image.getGeometry().getSize();
-    layerSize = {
-      x: size.getNumberOfColumns(),
-      y: size.getNumberOfRows()
-    };
+    layerSize = size.get2D();
 
     // create stage
     konvaStage = new Konva.Stage({
@@ -207,7 +205,16 @@ dwv.html.DrawLayer = function (containerDiv) {
     konvaStage.add(konvaLayer);
 
     // create draw controller
-    drawController = new dwv.DrawController(konvaLayer);
+    drawController = new dwv.ctrl.DrawController(konvaLayer);
+  };
+
+  /**
+   * Update the layer position.
+   *
+   * @param {object} pos The new position.
+   */
+  this.updatePosition = function (pos) {
+    this.getDrawController().activateDrawLayer(pos[0], pos[1]);
   };
 
   /**

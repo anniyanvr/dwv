@@ -1,12 +1,14 @@
 // namespaces
 var dwv = dwv || {};
+/** @namespace */
+dwv.ctrl = dwv.ctrl || {};
 
 /*
  * Data (list of {image, meta}) controller.
  *
  * @class
  */
-dwv.DataController = function () {
+dwv.ctrl.DataController = function () {
 
   /**
    * List of {image, meta}.
@@ -109,17 +111,19 @@ dwv.DataController = function () {
     // add slice to current image
     var sliceNb = currentData.image.appendSlice(image);
     // update meta data
-    if (dwv.utils.isArray(meta)) {
-      // image file case
-      // TODO merge?
-      currentData.meta.push(meta);
+    var idKey = '';
+    if (typeof meta.x00020010 !== 'undefined') {
+      // dicom case
+      idKey = 'InstanceNumber';
     } else {
-      currentData.meta = dwv.utils.mergeObjects(
-        currentData.meta,
-        getMetaObject(meta),
-        'InstanceNumber',
-        'value');
+      idKey = 'imageUid';
     }
+    currentData.meta = dwv.utils.mergeObjects(
+      currentData.meta,
+      getMetaObject(meta),
+      idKey,
+      'value');
+
     return sliceNb;
   };
 
@@ -163,11 +167,12 @@ dwv.DataController = function () {
    */
   function getMetaObject(meta) {
     var metaObj = null;
-    if (dwv.utils.isArray(meta)) {
-      metaObj = meta;
-    } else {
+    // wrap meta if dicom (x00020010: transfer syntax)
+    if (typeof meta.x00020010 !== 'undefined') {
       var newDcmMetaData = new dwv.dicom.DicomElementsWrapper(meta);
       metaObj = newDcmMetaData.dumpToObject();
+    } else {
+      metaObj = meta;
     }
     return metaObj;
   }

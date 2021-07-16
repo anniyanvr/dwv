@@ -1,6 +1,8 @@
 // namespaces
 var dwv = dwv || {};
 dwv.draw = dwv.draw || {};
+dwv.ctrl = dwv.ctrl || {};
+
 /**
  * The Konva namespace.
  *
@@ -12,11 +14,14 @@ var Konva = Konva || {};
 /**
  * Get the draw group id for a given position.
  *
- * @param {number} sliceNumber The slice number.
- * @param {number} frameNumber The frame number.
- * @returns {number} The group id.
+ * @param {object} currentPosition The current position.
+ * @returns {string} The group id.
+ * @deprecated Use the index.toStringId instead.
  */
-dwv.draw.getDrawPositionGroupId = function (sliceNumber, frameNumber) {
+dwv.draw.getDrawPositionGroupId = function (currentPosition) {
+  var sliceNumber = currentPosition.get(2);
+  var frameNumber = currentPosition.length() === 4
+    ? currentPosition.get(3) : 0;
   return 'slice-' + sliceNumber + '_frame-' + frameNumber;
 };
 
@@ -25,6 +30,7 @@ dwv.draw.getDrawPositionGroupId = function (sliceNumber, frameNumber) {
  *
  * @param {string} groupId The group id.
  * @returns {object} The slice and frame number.
+ * @deprecated Use the dwv.math.getFromStringId instead.
  */
 dwv.draw.getPositionFromGroupId = function (groupId) {
   var sepIndex = groupId.indexOf('_');
@@ -124,7 +130,7 @@ dwv.draw.getHierarchyLog = function (layer, prefix) {
  * @class
  * @param {object} konvaLayer The draw layer.
  */
-dwv.DrawController = function (konvaLayer) {
+dwv.ctrl.DrawController = function (konvaLayer) {
   // current position group id
   var currentPosGroupId = null;
 
@@ -167,16 +173,11 @@ dwv.DrawController = function (konvaLayer) {
   /**
    * Activate the current draw layer.
    *
-   * @param {object} currentPosition The current {i,j,k} position.
-   * @param {number} currentFrame The current frame number.
+   * @param {object} currentPosition The current position.
    */
-  this.activateDrawLayer = function (currentPosition, currentFrame) {
-    // set current position
-    var currentSlice = currentPosition.k;
-    // var currentFrame = viewController.getCurrentFrame();
+  this.activateDrawLayer = function (currentPosition) {
     // get and store the position group id
-    currentPosGroupId = dwv.draw.getDrawPositionGroupId(
-      currentSlice, currentFrame);
+    currentPosGroupId = currentPosition.toStringId(2);
 
     // get all position groups
     var posGroups = konvaLayer.getChildren(dwv.draw.isPositionNode);
@@ -198,13 +199,14 @@ dwv.DrawController = function (konvaLayer) {
   /**
    * Get a list of drawing display details.
    *
-   * @returns {object} A list of draw details including id, slice, frame...
+   * @returns {Array} A list of draw details as
+   *   {id, position, type, color, meta}
    */
   this.getDrawDisplayDetails = function () {
     var list = [];
     var groups = konvaLayer.getChildren();
     for (var j = 0, lenj = groups.length; j < lenj; ++j) {
-      var position = dwv.draw.getPositionFromGroupId(groups[j].id());
+      var position = dwv.math.getFromStringId(groups[j].id());
       var collec = groups[j].getChildren();
       for (var i = 0, leni = collec.length; i < leni; ++i) {
         var shape = collec[i].getChildren(dwv.draw.isNodeNameShape)[0];
@@ -229,8 +231,7 @@ dwv.DrawController = function (konvaLayer) {
         }
         list.push({
           id: collec[i].id(),
-          slice: position.sliceNumber,
-          frame: position.frameNumber,
+          position: position.toString(),
           type: type,
           color: shape.stroke(),
           meta: text.meta
@@ -321,8 +322,7 @@ dwv.DrawController = function (konvaLayer) {
         var shape = stateGroup.getChildren(dwv.draw.isNodeNameShape)[0];
         // create the draw command
         var cmd = new dwv.tool.DrawGroupCommand(
-          stateGroup, shape.className,
-          konvaLayer, true);
+          stateGroup, shape.className, konvaLayer);
         // draw command callbacks
         cmd.onExecute = cmdCallback;
         cmd.onUndo = cmdCallback;
@@ -376,7 +376,7 @@ dwv.DrawController = function (konvaLayer) {
     }
     // label
     var label = group.getChildren(dwv.draw.isNodeNameLabel)[0];
-    var shadowColor = dwv.html.getShadowColour(drawDetails.color);
+    var shadowColor = dwv.utils.getShadowColour(drawDetails.color);
     var kids = label.getChildren();
     for (var k = 0; k < kids.length; ++k) {
       var kid = kids[k];
@@ -384,10 +384,13 @@ dwv.DrawController = function (konvaLayer) {
       if (kids[k].className === 'Text') {
         var text = kids[k];
         text.shadowColor(shadowColor);
-        text.meta = drawDetails.meta;
-        text.setText(dwv.utils.replaceFlags(
-          text.meta.textExpr, text.meta.quantification
-        ));
+        if (typeof drawDetails.meta !== 'undefined') {
+          text.meta = drawDetails.meta;
+          text.setText(dwv.utils.replaceFlags(
+            text.meta.textExpr, text.meta.quantification
+          ));
+          label.setVisible(text.meta.textExpr.length !== 0);
+        }
       }
     }
 
@@ -493,4 +496,4 @@ dwv.DrawController = function (konvaLayer) {
     }
   };
 
-}; // class dwv.DrawController
+}; // class DrawController

@@ -96,11 +96,14 @@ dwv.tool.ZoomAndPan = function (app) {
       var layerController = app.getLayerController();
       var viewController =
         layerController.getActiveViewLayer().getViewController();
+      var size = app.getImage().getGeometry().getSize();
       // update view controller
-      if (diffY > 0) {
-        viewController.incrementSliceNb();
-      } else {
-        viewController.decrementSliceNb();
+      if (size.canScroll(2)) {
+        if (diffY > 0) {
+          viewController.incrementIndex(2);
+        } else {
+          viewController.decrementIndex(2);
+        }
       }
     } else {
       // zoom mode
@@ -170,24 +173,12 @@ dwv.tool.ZoomAndPan = function (app) {
   };
 
   /**
-   * Handle mouse scroll event (fired by Firefox).
-   *
-   * @param {object} event The mouse scroll event.
-   */
-  this.DOMMouseScroll = function (event) {
-    // ev.detail on firefox is 3
-    var step = -event.detail / 30;
-    app.zoom(step, event._xs, event._ys);
-  };
-
-  /**
    * Handle mouse wheel event.
    *
    * @param {object} event The mouse wheel event.
    */
-  this.mousewheel = function (event) {
-    // ev.wheelDelta on chrome is 120
-    var step = event.wheelDelta / 1200;
+  this.wheel = function (event) {
+    var step = -event.deltaY / 500;
     app.zoom(step, event._xs, event._ys);
   };
 
