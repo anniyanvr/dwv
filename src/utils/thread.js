@@ -1,99 +1,192 @@
-// namespaces
-var dwv = dwv || {};
-dwv.utils = dwv.utils || {};
+/**
+ * Fallback default thread pool size, used if the number of logical
+ * processors is not available.
+ */
+const FALLBACK_POOL_SIZE = 4;
+
+/**
+ * Get the number of logical processors.
+ *
+ * @returns {number|undefined} The number of logical processors
+ *   (`navigator.hardwareConcurrency`), undefined if not available.
+ */
+function getHardwareConcurrency() {
+  let res;
+  if (typeof navigator !== 'undefined' &&
+    typeof navigator.hardwareConcurrency !== 'undefined' &&
+    navigator.hardwareConcurrency > 0) {
+    res = navigator.hardwareConcurrency;
+  }
+  return res;
+}
+
+/**
+ * Get the default thread pool size: half the number of logical
+ * processors (at least one), or {@link FALLBACK_POOL_SIZE} if not
+ * available. Leaves room for the main thread and limits the number of
+ * workers (and their buffer copies), which matters on memory limited
+ * devices such as iOS ones.
+ *
+ * @returns {number} The pool size.
+ */
+export function getDefaultPoolSize() {
+  const hardwareConcurrency = getHardwareConcurrency();
+  let res = FALLBACK_POOL_SIZE;
+  if (typeof hardwareConcurrency !== 'undefined') {
+    res = Math.max(1, Math.floor(hardwareConcurrency / 2));
+  }
+  return res;
+}
+
+/**
+ * Clamp a thread pool size to the number of logical processors,
+ * if available.
+ *
+ * @param {number} poolSize The pool size.
+ * @returns {number} The clamped pool size.
+ */
+export function clampPoolSize(poolSize) {
+  const hardwareConcurrency = getHardwareConcurrency();
+  if (typeof hardwareConcurrency !== 'undefined' &&
+    poolSize > hardwareConcurrency) {
+    poolSize = hardwareConcurrency;
+  }
+  return poolSize;
+}
 
 /**
  * Thread Pool.
- * Highly inspired from {@link http://www.smartjava.org/content/html5-easily-parallelize-jobs-using-web-workers-and-threadpool}.
  *
- * @class
- * @param {number} poolSize The size of the pool.
+ * Highly inspired from {@link http://www.smartjava.org/content/html5-easily-parallelize-jobs-using-web-workers-and-threadpool}.
  */
-dwv.utils.ThreadPool = function (poolSize) {
-  // task queue
-  var taskQueue = [];
-  // lsit of available threads
-  var freeThreads = [];
-  // create 'poolSize' number of worker threads
-  for (var i = 0; i < poolSize; ++i) {
-    freeThreads.push(new dwv.utils.WorkerThread(this));
+export class ThreadPool {
+
+  /**
+   * @type {number}
+   */
+  #poolSize;
+  /**
+   * @type {WorkerTask[]}
+   */
+  #taskQueue;
+  /**
+   * @type {WorkerThread[]}
+   */
+  #freeThreads;
+  /**
+   * @type {WorkerThread[]}
+   */
+  #runningThreads;
+
+  /**
+   * @param {number} [poolSize] The size of the pool, defaults to
+   *   {@link getDefaultPoolSize}. Must be a positive integer, it is
+   *   clamped to the number of logical processors if available.
+   */
+  constructor(poolSize) {
+    if (typeof poolSize === 'undefined') {
+      poolSize = getDefaultPoolSize();
+    }
+    if (!Number.isInteger(poolSize) || poolSize < 1) {
+      throw new Error(
+        `Thread pool size must be a positive integer: ${poolSize}`);
+    }
+    this.#poolSize = clampPoolSize(poolSize);
+    // initialize members
+    this.#init();
   }
-  // list of running threads (unsed in abort)
-  var runningThreads = [];
+
+  /**
+   * Initialize the thread pool.
+   */
+  #init() {
+    // task queue
+    this.#taskQueue = [];
+    // list of available threads
+    this.#freeThreads = [];
+    // create 'poolSize' number of worker threads
+    for (let i = 0; i < this.#poolSize; ++i) {
+      this.#freeThreads.push(new WorkerThread(this));
+    }
+    // list of running threads (used in abort)
+    this.#runningThreads = [];
+  }
 
   /**
    * Add a worker task to the queue.
    * Will be run when a thread is made available.
    *
-   * @param {object} workerTask The task to add to the queue.
+   * @param {WorkerTask} workerTask The task to add to the queue.
    */
-  this.addWorkerTask = function (workerTask) {
+  addWorkerTask(workerTask) {
     // send work start if first task
-    if (freeThreads.length === poolSize) {
+    if (this.#freeThreads.length === this.#poolSize) {
       this.onworkstart({type: 'work-start'});
     }
     // launch task or queue
-    if (freeThreads.length > 0) {
+    if (this.#freeThreads.length > 0) {
       // get the first free worker thread
-      var workerThread = freeThreads.shift();
+      const workerThread = this.#freeThreads.shift();
+      // add the thread to the running list
+      this.#runningThreads.push(workerThread);
       // run the input task
       workerThread.run(workerTask);
-      // add the thread to the runnning list
-      runningThreads.push(workerThread);
     } else {
       // no free thread, add task to queue
-      taskQueue.push(workerTask);
+      this.#taskQueue.push(workerTask);
     }
-  };
+  }
 
   /**
    * Abort all threads.
    */
-  this.abort = function () {
+  abort() {
     // stop all threads
-    stop();
+    this.#stop();
+    // reinitialize so the pool can be reused
+    this.#init();
     // callback
     this.onabort({type: 'work-abort'});
     this.onworkend({type: 'work-end'});
-  };
+  }
 
   /**
    * Handle a task end.
    *
-   * @param {object} workerThread The thread to free.
+   * @param {WorkerThread} workerThread The thread to free.
    */
-  this.onTaskEnd = function (workerThread) {
+  onTaskEnd(workerThread) {
     // launch next task in queue or finish
-    if (taskQueue.length > 0) {
+    if (this.#taskQueue.length > 0) {
       // get waiting task
-      var workerTask = taskQueue.shift();
+      const workerTask = this.#taskQueue.shift();
       // use input thread to run the waiting task
       workerThread.run(workerTask);
     } else {
+      // stop the worker
+      workerThread.stop();
       // no task to run, add to free list
-      freeThreads.push(workerThread);
+      this.#freeThreads.push(workerThread);
       // remove from running list
-      for (var i = 0; i < runningThreads.length; ++i) {
-        if (runningThreads[i].getId() === workerThread.getId()) {
-          runningThreads.splice(i, 1);
-        }
-      }
+      this.#runningThreads = this.#runningThreads.filter(
+        (thread) => thread.getId() !== workerThread.getId()
+      );
       // the work is done when the queue is back to its initial size
-      if (freeThreads.length === poolSize) {
+      if (this.#freeThreads.length === this.#poolSize) {
         this.onwork({type: 'work'});
         this.onworkend({type: 'work-end'});
       }
     }
-  };
+  }
 
   /**
    * Handle an error message from a worker.
    *
    * @param {object} event The error event.
    */
-  this.handleWorkerError = function (event) {
+  handleWorkerError = (event) => {
     // stop all threads
-    stop();
+    this.#stop();
     // callback
     this.onerror({error: event});
     this.onworkend({type: 'work-end'});
@@ -103,127 +196,146 @@ dwv.utils.ThreadPool = function (poolSize) {
 
   /**
    * Stop the pool: stop all running threads.
-   *
-   * @private
    */
-  function stop() {
-    // clear tasks
-    taskQueue = [];
-    // cancel running workers
-    for (var i = 0; i < runningThreads.length; ++i) {
-      runningThreads[i].stop();
+  #stop() {
+    for (const thread of this.#runningThreads) {
+      thread.stop();
     }
-    runningThreads = [];
+    this.#runningThreads = [];
   }
 
-}; // ThreadPool
+  /**
+   * Handle a work start event.
+   * Default does nothing.
+   *
+   * @param {object} _event The work start event.
+   */
+  onworkstart(_event) {}
 
-/**
- * Handle a work start event.
- * Default does nothing.
- *
- * @param {object} _event The work start event.
- */
-dwv.utils.ThreadPool.prototype.onworkstart = function (_event) {};
-/**
- * Handle a work item event.
- * Default does nothing.
- *
- * @param {object} _event The work item event fired
- *   when a work item ended successfully.
- */
-dwv.utils.ThreadPool.prototype.onworkitem = function (_event) {};
-/**
- * Handle a work event.
- * Default does nothing.
- *
- * @param {object} _event The work event fired
- *   when a work ended successfully.
- */
-dwv.utils.ThreadPool.prototype.onwork = function (_event) {};
-/**
- * Handle a work end event.
- * Default does nothing.
- *
- * @param {object} _event The work end event fired
- *  when a work has completed, successfully or not.
- */
-dwv.utils.ThreadPool.prototype.onworkend = function (_event) {};
-/**
- * Handle an error event.
- * Default does nothing.
- *
- * @param {object} _event The error event.
- */
-dwv.utils.ThreadPool.prototype.onerror = function (_event) {};
-/**
- * Handle an abort event.
- * Default does nothing.
- *
- * @param {object} _event The abort event.
- */
-dwv.utils.ThreadPool.prototype.onabort = function (_event) {};
+  /**
+   * Handle a work item event.
+   * Default does nothing.
+   *
+   * @param {object} _event The work item event fired
+   *   when a work item ended successfully.
+   */
+  onworkitem(_event) {}
+
+  /**
+   * Handle a work event.
+   * Default does nothing.
+   *
+   * @param {object} _event The work event fired
+   *   when a work ended successfully.
+   */
+  onwork(_event) {}
+
+  /**
+   * Handle a work end event.
+   * Default does nothing.
+   *
+   * @param {object} _event The work end event fired
+   *  when a work has completed, successfully or not.
+   */
+  onworkend(_event) {}
+
+  /**
+   * Handle an error event.
+   * Default does nothing.
+   *
+   * @param {object} _event The error event.
+   */
+  onerror(_event) {}
+
+  /**
+   * Handle an abort event.
+   * Default does nothing.
+   *
+   * @param {object} _event The abort event.
+   */
+  onabort(_event) {}
+
+} // ThreadPool
 
 /**
  * Worker background task.
  *
+ * Ref: {@link https://developer.mozilla.org/en-US/docs/Web/API/Worker}.
+ *
  * @external Worker
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Worker
  */
 
 /**
  * Worker thread.
- *
- * @class
- * @param {object} parentPool The parent pool.
  */
-dwv.utils.WorkerThread = function (parentPool) {
-  // closure to self
-  var self = this;
-  // thread ID
-  var id = Math.random().toString(36).substring(2, 15);
-  // running task
-  var runningTask = null;
-  // worker used to run task
-  var worker;
+class WorkerThread {
+  /**
+   * @type {ThreadPool}
+   */
+  parentPool;
+  /**
+   * @type {string}
+   */
+  id;
+  /**
+   * @type {WorkerTask}
+   */
+  runningTask;
+  /**
+   * @type {Worker}
+   */
+  worker;
+
+  /**
+   * @param {ThreadPool} parentPool The parent pool.
+   */
+  constructor(parentPool) {
+    this.parentPool = parentPool;
+    // thread ID
+    this.id = Math.random().toString(36).substring(2, 15);
+  }
 
   /**
    * Get the thread ID.
    *
    * @returns {string} The thread ID (alphanumeric).
    */
-  this.getId = function () {
-    return id;
-  };
+  getId() {
+    return this.id;
+  }
 
   /**
-   * Run a worker task
+   * Run a worker task.
    *
-   * @param {object} workerTask The task to run.
+   * @param {WorkerTask} workerTask The task to run.
    */
-  this.run = function (workerTask) {
+  run(workerTask) {
     // store task
-    runningTask = workerTask;
-    // create a new web worker
-    if (runningTask.script !== null) {
-      worker = new Worker(runningTask.script);
+    this.runningTask = workerTask;
+    // create a new web worker if not done yet
+    if (typeof this.worker === 'undefined') {
+      this.worker = this.runningTask.getWorker();
       // set callbacks
-      worker.onmessage = onmessage;
-      worker.onerror = onerror;
-      // launch the worker
-      worker.postMessage(runningTask.startMessage);
+      this.worker.onmessage = this.onmessage;
+      this.worker.onerror = this.onerror;
     }
-  };
+    // launch the worker
+    const {message, transfer} = this.runningTask.getStartMessage();
+    this.worker.postMessage(message, transfer);
+  }
 
   /**
-   * Finish a task and tell the parent.
+   * Finish a task.
    */
-  this.stop = function () {
+  stop() {
     // stop the worker
-    worker.terminate();
-    // tell the parent pool this thread is free
-    parentPool.onTaskEnd(this);
-  };
+    if (typeof this.worker !== 'undefined') {
+      this.worker.terminate();
+      // force create at next run
+      this.worker = undefined;
+      this.runningTask = undefined;
+    }
+  }
 
   /**
    * Message event handler.
@@ -231,43 +343,72 @@ dwv.utils.WorkerThread = function (parentPool) {
    * which also indicates the end of this worker.
    *
    * @param {object} event The message event.
-   * @private
    */
-  function onmessage(event) {
-    // pass to parent
-    event.index = runningTask.id;
-    parentPool.onworkitem(event);
-    // stop the worker and free the thread
-    self.stop();
-  }
+  onmessage = (event) => {
+    // augment event
+    event.itemNumber = this.runningTask.info.itemNumber;
+    event.numberOfItems = this.runningTask.info.numberOfItems;
+    event.index = this.runningTask.info.index;
+    event.indexOrigin = this.runningTask.info.indexOrigin;
+    // send event
+    this.parentPool.onworkitem(event);
+    // tell the parent pool the task is done
+    this.parentPool.onTaskEnd(this);
+  };
 
   /**
    * Error event handler.
    *
    * @param {object} event The error event.
-   * @private
    */
-  function onerror(event) {
+  onerror = (event) => {
+    // augment event
+    event.itemNumber = this.runningTask.info.itemNumber;
+    event.numberOfItems = this.runningTask.info.numberOfItems;
+    event.index = this.runningTask.info.index;
+    event.indexOrigin = this.runningTask.info.indexOrigin;
     // pass to parent
-    parentPool.handleWorkerError(event);
+    this.parentPool.handleWorkerError(event);
     // stop the worker and free the thread
-    self.stop();
-  }
-}; // class WorkerThread
+    this.stop();
+  };
+} // class WorkerThread
 
 /**
  * Worker task.
- *
- * @class
- * @param {string} script The worker script.
- * @param {object} message The data to pass to the worker.
- * @param {number} index The worker id.
  */
-dwv.utils.WorkerTask = function (script, message, index) {
-  // worker script
-  this.script = script;
-  // worker start message
-  this.startMessage = message;
-  // worker id
-  this.id = index;
-};
+export class WorkerTask {
+  /**
+   * @param {object} message The data to pass to the worker.
+   * @param {object} info Information object about the input data.
+   */
+  constructor(message, info) {
+    // worker start message
+    this.startMessage = message;
+    // information about the work data
+    this.info = info;
+  }
+
+  /**
+   * Get the message to post to the worker, called just before
+   * running the task. The transferred objects are moved to the worker
+   * (no copy) and are no longer usable by the caller.
+   * Default returns the start message with no transferred objects.
+   *
+   * @returns {{message: object, transfer: Transferable[]}} The message
+   *   and the list of objects to transfer.
+   */
+  getStartMessage() {
+    return {message: this.startMessage, transfer: []};
+  }
+
+  /**
+   * Get the task web worker.
+   * Defaults returns undefined.
+   *
+   * @returns {Worker|undefined} The task worker.
+   */
+  getWorker() {
+    return undefined;
+  }
+}

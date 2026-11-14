@@ -1,70 +1,225 @@
-// namespaces
-var dwv = dwv || {};
-/** @namespace */
-dwv.dicom = dwv.dicom || {};
+import {
+  Tag,
+  getTransferSyntaxUIDTag,
+  isSequenceDelimitationItemTag,
+  isItemDelimitationItemTag,
+  isAnyPixelDataTag,
+  hasAnyPixelDataElement
+} from './dicomTag.js';
+import {getDicomTagInfo} from './dicomTagInfo.js';
+import {
+  is32bitVLVR,
+  isCharSetStringVR,
+  transferSyntaxes,
+  transferSyntaxKeywords,
+  vrTypes,
+} from './dictionary.js';
+import {
+  safeGet,
+  DataElement
+} from './dataElement.js';
+import {DataReader} from './dataReader.js';
+import {logger} from '../utils/logger.js';
+
+/**
+ * @import {IntTypedArray, TypedArray} from '../math/types.js';
+ */
+
+/**
+ * List of DICOM data elements indexed via a 8 character string formed from
+ * the group and element numbers.
+ *
+ * @typedef {Record<string, DataElement>} DataElements
+ */
 
 /**
  * Get the version of the library.
  *
  * @returns {string} The version of the library.
  */
-dwv.getVersion = function () {
-  return '0.29.0-beta';
-};
+export function getDwvVersion() {
+  return '0.37.0-beta.24';
+}
 
 /**
- * Clean string: trim and remove ending.
+ * Get the version of the library as a Unique Identifier (UI),
+ * meaning just numbers and dots.
+ *
+ * @returns {string} The UI version of the library.
+ */
+export function getDwvVersionUI() {
+  // replace beta with '.99'
+  return getDwvVersion().replace('-beta', '.99');
+}
+
+/**
+ * Get the dwv UID prefix.
+ * Issued by Medical Connections Ltd (www.medicalconnections.co.uk)
+ *   on 25/10/2017.
+ *
+ * @returns {string} The dwv UID prefix.
+ */
+export function getDwvUIDPrefix() {
+  return '1.2.826.0.1.3680043.9.7278.1';
+}
+
+/**
+ * Get the value of the ImplementationVersionName tag.
+ *
+ * @returns {string} The name.
+ */
+export function getImplementationVersionName() {
+  return `DWV_${getDwvVersion()}`;
+}
+
+/**
+ * Get the value of the ImplementationClassUID tag.
+ *
+ * @returns {string} The uid.
+ */
+export function getImplementationClassUID() {
+  return `${getDwvUIDPrefix()}.${getDwvVersionUI()}`;
+}
+
+/**
+ * Get the dwv version from the value of the
+ *   ImplementationClassUID tag.
+ *
+ * @param {string} uid The uid.
+ * @returns {string|undefined} The dwv version.
+ */
+export function getDwvVersionFromImplementationClassUID(uid) {
+  let version;
+  const dwvPrefix = getDwvUIDPrefix();
+  if (uid.startsWith(dwvPrefix)) {
+    // reverse getDwvVersionUI
+    version = uid.substring(dwvPrefix.length + 1).replace('.99', '-beta');
+  }
+  return version;
+}
+
+/**
+ * Split a string version into parts.
+ * The input version follows a 'm.n.p[-beta.q]' version sheme (related
+ *   to semantic versioning).
+ *
+ * @param {string} version The version.
+ * @returns {string[]} The splited version.
+ */
+function splitVersion(version) {
+  const split = version.split('-');
+  let versions = [];
+  for (const s of split) {
+    versions = versions.concat(s.split('.'));
+  }
+  return versions;
+}
+
+/**
+ * Compare versions.
+ * The input versions follow a 'm.n.p[-beta.q]' version sheme (related
+ *   to semantic versioning).
+ *
+ * @param {string} a The first version.
+ * @param {string} b The second version.
+ * @returns {number} >0 to sort a after b, <0 to sort a before b,
+ *   0 to not change order.
+ */
+export function compareVersions(a, b) {
+  let res = 0;
+  const splitA = splitVersion(a);
+  const splitB = splitVersion(b);
+  for (let i = 0; i < 3; ++i) {
+    res = parseInt(splitA[i], 10) - parseInt(splitB[i], 10);
+    if (res !== 0) {
+      break;
+    }
+  }
+  // beta part
+  if (res === 0) {
+    const betaIndex = 4;
+    const betaA = splitA[betaIndex];
+    const betaB = splitB[betaIndex];
+    if (typeof betaA === 'undefined' &&
+      typeof betaB === 'undefined') {
+      res = 0;
+    } else if (typeof betaA === 'undefined' &&
+      typeof betaB !== 'undefined') {
+      res = 1;
+    } else if (typeof betaA !== 'undefined' &&
+      typeof betaB === 'undefined') {
+      res = -1;
+    } else {
+      res = parseInt(betaA, 10) - parseInt(betaB, 10);
+    }
+  }
+  return res;
+}
+
+/**
+ * Check if a version in inside bounds (bounds inclusives).
+ * The input version follows a 'm.n.p[-beta.q]' version sheme (related
+ *   to semantic versioning).
+ *
+ * @param {string} version The version to check.
+ * @param {string} min The minimum version.
+ * @param {string} max The maximum version.
+ * @returns {boolean} True if the version in inside the bounds.
+ */
+export function isVersionInBounds(version, min, max) {
+  const compareMin = compareVersions(version, min);
+  const compareMax = compareVersions(version, max);
+  return compareMin >= 0 && compareMax <= 0;
+}
+
+/**
+ * Check that an input buffer includes the DICOM prefix 'DICM'
+ *   after the 128 bytes preamble.
+ *
+ * Ref: [DICOM File Meta]{@link https://dicom.nema.org/medical/dicom/2024a/output/chtml/part10/chapter_7.html#sect_7.1}.
+ *
+ * @param {ArrayBuffer} buffer The buffer to check.
+ * @returns {boolean} True if the buffer includes the prefix.
+ */
+export function hasDicomPrefix(buffer) {
+  // check size: typed array constructor will throw RangeError if
+  // byteOffset + length * TypedArray.BYTES_PER_ELEMENT > buffer.byteLength
+  if (buffer.byteLength < 132) {
+    return false;
+  }
+  const prefixArray = new Uint8Array(buffer, 128, 4);
+  const stringReducer = function (previous, current) {
+    return previous + String.fromCharCode(current);
+  };
+  return prefixArray.reduce(stringReducer, '') === 'DICM';
+}
+
+/**
+ * Clean string: remove null characters (padding) and trim.
+ * Warning: no tests are done on the input, will fail if
+ *   null or undefined or not string.
  *
  * @param {string} inputStr The string to clean.
  * @returns {string} The cleaned string.
  */
-dwv.dicom.cleanString = function (inputStr) {
-  var res = inputStr;
-  if (inputStr) {
-    // trim spaces
-    res = inputStr.trim();
-    // get rid of ending zero-width space (u200B)
-    if (res[res.length - 1] === String.fromCharCode('u200B')) {
-      res = res.substring(0, res.length - 1);
-    }
-  }
-  return res;
-};
+export function cleanString(inputStr) {
+  // remove null characters (UI padding) and trim spaces
+  return inputStr.replace(/\0/g, '').trim();
+}
 
 /**
- * Is the tag group a private tag group ?
- * see: http://dicom.nema.org/medical/dicom/2015a/output/html/part05.html#sect_7.8
+ * Get the utfLabel (used by the TextDecoder) from a character set term.
  *
- * @param {string} group The group string as '0x####'
- * @returns {boolean} True if the tag group is private,
- *   ie if its group is an odd number.
- */
-dwv.dicom.isPrivateGroup = function (group) {
-  var groupNumber = parseInt(group.substr(2, 6), 10);
-  return (groupNumber % 2) === 1;
-};
-
-/**
- * Is the Native endianness Little Endian.
- *
- * @type {boolean}
- */
-dwv.dicom.isNativeLittleEndian = function () {
-  return new Int8Array(new Int16Array([1]).buffer)[0] > 0;
-};
-
-/**
- * Get the utfLabel (used by the TextDecoder) from a character set term
  * References:
- * - DICOM [Value Encoding]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/chapter_6.html}
- * - DICOM [Specific Character Set]{@link http://dicom.nema.org/dicom/2013/output/chtml/part03/sect_C.12.html#sect_C.12.1.1.2}
- * - [TextDecoder#Parameters]{@link https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder/TextDecoder#Parameters}
+ * - DICOM [Value Encoding]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/chapter_6.html},
+ * - DICOM [Specific Character Set]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part03/sect_C.12.html#sect_C.12.1.1.2},
+ * - [TextDecoder#Parameters]{@link https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder/TextDecoder#Parameters}.
  *
  * @param {string} charSetTerm The DICOM character set.
  * @returns {string} The corresponding UTF label.
  */
-dwv.dicom.getUtfLabel = function (charSetTerm) {
-  var label = 'utf-8';
+function getUtfLabel(charSetTerm) {
+  let label = 'utf-8';
   if (charSetTerm === 'ISO_IR 100') {
     label = 'iso-8859-1';
   } else if (charSetTerm === 'ISO_IR 101') {
@@ -90,8 +245,9 @@ dwv.dicom.getUtfLabel = function (charSetTerm) {
   } else if (charSetTerm === 'ISO 2022 IR 87') {
     label = 'iso-2022-jp';
   } else if (charSetTerm === 'ISO 2022 IR 149') {
-    // not supported by TextDecoder when it says it should...
-    //label = "iso-2022-kr";
+    // not supported by TextDecoder as iso-2022-kr, use euc-kr
+    // after removing the escape sequences (see removeEscapeSequences)
+    label = 'euc-kr';
   } else if (charSetTerm === 'ISO 2022 IR 58') {
     // not supported by TextDecoder...
     //label = "iso-2022-cn";
@@ -105,457 +261,60 @@ dwv.dicom.getUtfLabel = function (charSetTerm) {
     label = 'chinese';
   }
   return label;
-};
+}
 
 /**
- * Data reader.
+ * Remove the ISO 2022 escape sequences from a buffer:
+ * ESC (0x1B), intermediate bytes (0x20-0x2F) and a final byte.
+ * Needed for ISO 2022 IR 149 (Korean), where the escape sequence
+ * only designates KS X 1001 to G1, so the rest decodes as EUC-KR.
  *
- * @class
- * @param {Array} buffer The input array buffer.
- * @param {boolean} isLittleEndian Flag to tell if the data is little
- *   or big endian.
+ * Ref: DICOM [Code Extensions]{@link https://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/chapter_6.html#sect_6.1.2.5}.
+ *
+ * @param {Uint8Array} buffer The input buffer.
+ * @returns {Uint8Array} The buffer without escape sequences.
  */
-dwv.dicom.DataReader = function (buffer, isLittleEndian) {
-  // Set endian flag if not defined.
-  if (typeof isLittleEndian === 'undefined') {
-    isLittleEndian = true;
+function removeEscapeSequences(buffer) {
+  if (!buffer.includes(0x1b)) {
+    return buffer;
   }
+  const result = [];
+  let i = 0;
+  while (i < buffer.length) {
+    if (buffer[i] === 0x1b) {
+      ++i;
+      // intermediate bytes
+      while (i < buffer.length && buffer[i] >= 0x20 && buffer[i] <= 0x2f) {
+        ++i;
+      }
+      // final byte
+      ++i;
+    } else {
+      result.push(buffer[i]);
+      ++i;
+    }
+  }
+  return new Uint8Array(result);
+}
 
-  // Default text decoder
-  var defaultTextDecoder = {};
-  defaultTextDecoder.decode = function (buffer) {
-    var result = '';
-    for (var i = 0, leni = buffer.length; i < leni; ++i) {
+/**
+ * Default text decoder.
+ */
+class DefaultTextDecoder {
+  /**
+   * Decode an input string buffer.
+   *
+   * @param {Uint8Array} buffer The buffer to decode.
+   * @returns {string} The decoded string.
+   */
+  decode(buffer) {
+    let result = '';
+    for (let i = 0, leni = buffer.length; i < leni; ++i) {
       result += String.fromCharCode(buffer[i]);
     }
     return result;
-  };
-  // Text decoder
-  var textDecoder = defaultTextDecoder;
-  if (typeof window.TextDecoder !== 'undefined') {
-    textDecoder = new TextDecoder('iso-8859-1');
   }
-
-  /**
-   * Set the utfLabel used to construct the TextDecoder.
-   *
-   * @param {string} label The encoding label.
-   */
-  this.setUtfLabel = function (label) {
-    if (typeof window.TextDecoder !== 'undefined') {
-      textDecoder = new TextDecoder(label);
-    }
-  };
-
-  /**
-   * Is the Native endianness Little Endian.
-   *
-   * @private
-   * @type {boolean}
-   */
-  var isNativeLittleEndian = dwv.dicom.isNativeLittleEndian();
-
-  /**
-   * Flag to know if the TypedArray data needs flipping.
-   *
-   * @private
-   * @type {boolean}
-   */
-  var needFlip = (isLittleEndian !== isNativeLittleEndian);
-
-  /**
-   * The main data view.
-   *
-   * @private
-   * @type {DataView}
-   */
-  var view = new DataView(buffer);
-
-  /**
-   * Flip an array's endianness.
-   * Inspired from [DataStream.js]{@link https://github.com/kig/DataStream.js}.
-   *
-   * @param {object} array The array to flip (modified).
-   */
-  this.flipArrayEndianness = function (array) {
-    var blen = array.byteLength;
-    var u8 = new Uint8Array(array.buffer, array.byteOffset, blen);
-    var bpel = array.BYTES_PER_ELEMENT;
-    var tmp;
-    for (var i = 0; i < blen; i += bpel) {
-      for (var j = i + bpel - 1, k = i; j > k; j--, k++) {
-        tmp = u8[k];
-        u8[k] = u8[j];
-        u8[j] = tmp;
-      }
-    }
-  };
-
-  /**
-   * Read Uint16 (2 bytes) data.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @returns {number} The read data.
-   */
-  this.readUint16 = function (byteOffset) {
-    return view.getUint16(byteOffset, isLittleEndian);
-  };
-  /**
-   * Read Uint32 (4 bytes) data.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @returns {number} The read data.
-   */
-  this.readUint32 = function (byteOffset) {
-    return view.getUint32(byteOffset, isLittleEndian);
-  };
-  /**
-   * Read Int32 (4 bytes) data.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @returns {number} The read data.
-   */
-  this.readInt32 = function (byteOffset) {
-    return view.getInt32(byteOffset, isLittleEndian);
-  };
-  /**
-   * Read Uint8 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readUint8Array = function (byteOffset, size) {
-    return new Uint8Array(buffer, byteOffset, size);
-  };
-  /**
-   * Read Int8 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readInt8Array = function (byteOffset, size) {
-    return new Int8Array(buffer, byteOffset, size);
-  };
-  /**
-   * Read Uint16 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readUint16Array = function (byteOffset, size) {
-    var arraySize = size / Uint16Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Uint16Array.BYTES_PER_ELEMENT (=2)
-    if ((byteOffset % Uint16Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Uint16Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Uint16Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getUint16((byteOffset +
-                    Uint16Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read Int16 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readInt16Array = function (byteOffset, size) {
-    var arraySize = size / Int16Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Int16Array.BYTES_PER_ELEMENT (=2)
-    if ((byteOffset % Int16Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Int16Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Int16Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getInt16((byteOffset +
-                    Int16Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read Uint32 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readUint32Array = function (byteOffset, size) {
-    var arraySize = size / Uint32Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Uint32Array.BYTES_PER_ELEMENT (=4)
-    if ((byteOffset % Uint32Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Uint32Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Uint32Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getUint32((byteOffset +
-                    Uint32Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read Int32 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readInt32Array = function (byteOffset, size) {
-    var arraySize = size / Int32Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Int32Array.BYTES_PER_ELEMENT (=4)
-    if ((byteOffset % Int32Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Int32Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Int32Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getInt32((byteOffset +
-                    Int32Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read Float32 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readFloat32Array = function (byteOffset, size) {
-    var arraySize = size / Float32Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Float32Array.BYTES_PER_ELEMENT (=4)
-    if ((byteOffset % Float32Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Float32Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Float32Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getFloat32((byteOffset +
-                    Float32Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read Float64 array.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} size The size of the array.
-   * @returns {Array} The read data.
-   */
-  this.readFloat64Array = function (byteOffset, size) {
-    var arraySize = size / Float64Array.BYTES_PER_ELEMENT;
-    var data = null;
-    // byteOffset should be a multiple of Float64Array.BYTES_PER_ELEMENT (=8)
-    if ((byteOffset % Float64Array.BYTES_PER_ELEMENT) === 0) {
-      data = new Float64Array(buffer, byteOffset, arraySize);
-      if (needFlip) {
-        this.flipArrayEndianness(data);
-      }
-    } else {
-      data = new Float64Array(arraySize);
-      for (var i = 0; i < arraySize; ++i) {
-        data[i] = view.getFloat64((byteOffset +
-                    Float64Array.BYTES_PER_ELEMENT * i),
-        isLittleEndian);
-      }
-    }
-    return data;
-  };
-  /**
-   * Read data as an hexadecimal string.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @returns {Array} The read data.
-   */
-  this.readHex = function (byteOffset) {
-    // read and convert to hex string
-    var str = this.readUint16(byteOffset).toString(16);
-    // return padded
-    return '0x0000'.substr(0, 6 - str.length) + str.toUpperCase();
-  };
-
-  /**
-   * Read data as a string.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} nChars The number of characters to read.
-   * @returns {string} The read data.
-   */
-  this.readString = function (byteOffset, nChars) {
-    var data = this.readUint8Array(byteOffset, nChars);
-    return defaultTextDecoder.decode(data);
-  };
-
-  /**
-   * Read data as a 'special' string, decoding it if the
-   *   TextDecoder is available.
-   *
-   * @param {number} byteOffset The offset to start reading from.
-   * @param {number} nChars The number of characters to read.
-   * @returns {string} The read data.
-   */
-  this.readSpecialString = function (byteOffset, nChars) {
-    var data = this.readUint8Array(byteOffset, nChars);
-    return textDecoder.decode(data);
-  };
-
-};
-
-/**
- * Get the group-element pair from a tag string name.
- *
- * @param {string} tagName The tag string name.
- * @returns {object} group-element pair.
- */
-dwv.dicom.getGroupElementFromName = function (tagName) {
-  var group = null;
-  var element = null;
-  var dict = dwv.dicom.dictionary;
-  var keys0 = Object.keys(dict);
-  var keys1 = null;
-  // label for nested loop break
-  outLabel:
-  // search through dictionary
-  for (var k0 = 0, lenK0 = keys0.length; k0 < lenK0; ++k0) {
-    group = keys0[k0];
-    keys1 = Object.keys(dict[group]);
-    for (var k1 = 0, lenK1 = keys1.length; k1 < lenK1; ++k1) {
-      element = keys1[k1];
-      if (dict[group][element][2] === tagName) {
-        break outLabel;
-      }
-    }
-  }
-  return {group: group, element: element};
-};
-
-/**
- * Immutable tag.
- *
- * @class
- * @param {string} group The tag group.
- * @param {string} element The tag element.
- */
-dwv.dicom.Tag = function (group, element) {
-  /**
-   * Get the tag group.
-   *
-   * @returns {string} The tag group.
-   */
-  this.getGroup = function () {
-    return group;
-  };
-  /**
-   * Get the tag element.
-   *
-   * @returns {string} The tag element.
-   */
-  this.getElement = function () {
-    return element;
-  };
-}; // Tag class
-
-/**
- * Check for Tag equality.
- *
- * @param {object} rhs The other tag to compare to.
- * @returns {boolean} True if both tags are equal.
- */
-dwv.dicom.Tag.prototype.equals = function (rhs) {
-  return rhs !== null &&
-        this.getGroup() === rhs.getGroup() &&
-        this.getElement() === rhs.getElement();
-};
-
-/**
- * Check for Tag equality.
- *
- * @param {object} rhs The other tag to compare to provided as a simple object.
- * @returns {boolean} True if both tags are equal.
- */
-dwv.dicom.Tag.prototype.equals2 = function (rhs) {
-  if (rhs === null ||
-        typeof rhs.group === 'undefined' ||
-        typeof rhs.element === 'undefined') {
-    return false;
-  }
-  return this.equals(new dwv.dicom.Tag(rhs.group, rhs.element));
-};
-
-// Get the FileMetaInformationGroupLength Tag.
-dwv.dicom.getFileMetaInformationGroupLengthTag = function () {
-  return new dwv.dicom.Tag('0x0002', '0x0000');
-};
-// Get the Item Tag.
-dwv.dicom.getItemTag = function () {
-  return new dwv.dicom.Tag('0xFFFE', '0xE000');
-};
-// Get the ItemDelimitationItem Tag.
-dwv.dicom.getItemDelimitationItemTag = function () {
-  return new dwv.dicom.Tag('0xFFFE', '0xE00D');
-};
-// Get the SequenceDelimitationItem Tag.
-dwv.dicom.getSequenceDelimitationItemTag = function () {
-  return new dwv.dicom.Tag('0xFFFE', '0xE0DD');
-};
-// Get the PixelData Tag.
-dwv.dicom.getPixelDataTag = function () {
-  return new dwv.dicom.Tag('0x7FE0', '0x0010');
-};
-
-/**
- * Get the group-element key used to store DICOM elements.
- *
- * @param {number} group The DICOM group.
- * @param {number} element The DICOM element.
- * @returns {string} The key.
- */
-dwv.dicom.getGroupElementKey = function (group, element) {
-  return 'x' + group.substr(2, 6) + element.substr(2, 6);
-};
-
-/**
- * Split a group-element key used to store DICOM elements.
- *
- * @param {string} key The key in form "x00280102.
- * @returns {object} The DICOM group and element.
- */
-dwv.dicom.splitGroupElementKey = function (key) {
-  return {group: key.substr(1, 4), element: key.substr(5, 8)};
-};
+}
 
 /**
  * Get patient orientation label in the reverse direction.
@@ -563,12 +322,12 @@ dwv.dicom.splitGroupElementKey = function (key) {
  * @param {string} ori Patient Orientation value.
  * @returns {string} Reverse Orientation Label.
  */
-dwv.dicom.getReverseOrientation = function (ori) {
+export function getReverseOrientation(ori) {
   if (!ori) {
     return null;
   }
   // reverse labels
-  var rlabels = {
+  const rlabels = {
     L: 'R',
     R: 'L',
     A: 'P',
@@ -577,17 +336,17 @@ dwv.dicom.getReverseOrientation = function (ori) {
     F: 'H'
   };
 
-  var rori = '';
-  for (var n = 0; n < ori.length; n++) {
-    var o = ori.substr(n, 1);
-    var r = rlabels[o];
+  let rori = '';
+  for (let n = 0; n < ori.length; n++) {
+    const o = ori.substring(n, n + 1);
+    const r = rlabels[o];
     if (r) {
       rori += r;
     }
   }
   // return
   return rori;
-};
+}
 
 /**
  * Tell if a given syntax is an implicit one (element with no VR).
@@ -595,9 +354,9 @@ dwv.dicom.getReverseOrientation = function (ori) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if an implicit syntax.
  */
-dwv.dicom.isImplicitTransferSyntax = function (syntax) {
-  return syntax === '1.2.840.10008.1.2';
-};
+export function isImplicitTransferSyntax(syntax) {
+  return syntax === transferSyntaxKeywords.ImplicitVRLittleEndian;
+}
 
 /**
  * Tell if a given syntax is a big endian syntax.
@@ -605,9 +364,9 @@ dwv.dicom.isImplicitTransferSyntax = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a big endian syntax.
  */
-dwv.dicom.isBigEndianTransferSyntax = function (syntax) {
-  return syntax === '1.2.840.10008.1.2.2';
-};
+export function isBigEndianTransferSyntax(syntax) {
+  return syntax === transferSyntaxKeywords.ExplicitVRBigEndian;
+}
 
 /**
  * Tell if a given syntax is a JPEG baseline one.
@@ -615,23 +374,10 @@ dwv.dicom.isBigEndianTransferSyntax = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a jpeg baseline syntax.
  */
-dwv.dicom.isJpegBaselineTransferSyntax = function (syntax) {
-  return syntax === '1.2.840.10008.1.2.4.50' ||
-        syntax === '1.2.840.10008.1.2.4.51';
-};
-
-/**
- * Tell if a given syntax is a retired JPEG one.
- *
- * @param {string} syntax The transfer syntax to test.
- * @returns {boolean} True if a retired jpeg syntax.
- */
-dwv.dicom.isJpegRetiredTransferSyntax = function (syntax) {
-  return (syntax.match(/1.2.840.10008.1.2.4.5/) !== null &&
-        !dwv.dicom.isJpegBaselineTransferSyntax() &&
-        !dwv.dicom.isJpegLosslessTransferSyntax()) ||
-        syntax.match(/1.2.840.10008.1.2.4.6/) !== null;
-};
+export function isJpegBaselineTransferSyntax(syntax) {
+  return syntax === transferSyntaxKeywords.JPEGBaseline8Bit ||
+    syntax === transferSyntaxKeywords.JPEGExtended12Bit;
+}
 
 /**
  * Tell if a given syntax is a JPEG Lossless one.
@@ -639,20 +385,10 @@ dwv.dicom.isJpegRetiredTransferSyntax = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a jpeg lossless syntax.
  */
-dwv.dicom.isJpegLosslessTransferSyntax = function (syntax) {
-  return syntax === '1.2.840.10008.1.2.4.57' ||
-        syntax === '1.2.840.10008.1.2.4.70';
-};
-
-/**
- * Tell if a given syntax is a JPEG-LS one.
- *
- * @param {string} syntax The transfer syntax to test.
- * @returns {boolean} True if a jpeg-ls syntax.
- */
-dwv.dicom.isJpeglsTransferSyntax = function (syntax) {
-  return syntax.match(/1.2.840.10008.1.2.4.8/) !== null;
-};
+export function isJpegLosslessTransferSyntax(syntax) {
+  return syntax === transferSyntaxKeywords.JPEGLossless ||
+    syntax === transferSyntaxKeywords.JPEGLosslessSV1;
+}
 
 /**
  * Tell if a given syntax is a JPEG 2000 one.
@@ -660,9 +396,9 @@ dwv.dicom.isJpeglsTransferSyntax = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a jpeg 2000 syntax.
  */
-dwv.dicom.isJpeg2000TransferSyntax = function (syntax) {
+export function isJpeg2000TransferSyntax(syntax) {
   return syntax.match(/1.2.840.10008.1.2.4.9/) !== null;
-};
+}
 
 /**
  * Tell if a given syntax is a RLE (Run-length encoding) one.
@@ -670,29 +406,29 @@ dwv.dicom.isJpeg2000TransferSyntax = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a RLE syntax.
  */
-dwv.dicom.isRleTransferSyntax = function (syntax) {
-  return syntax.match(/1.2.840.10008.1.2.5/) !== null;
-};
+function isRleTransferSyntax(syntax) {
+  return syntax === transferSyntaxKeywords.RLELossless;
+}
 
 /**
  * Tell if a given syntax needs decompression.
  *
  * @param {string} syntax The transfer syntax to test.
- * @returns {string} The name of the decompression algorithm.
+ * @returns {string|undefined} The name of the decompression algorithm.
  */
-dwv.dicom.getSyntaxDecompressionName = function (syntax) {
-  var algo = null;
-  if (dwv.dicom.isJpeg2000TransferSyntax(syntax)) {
+export function getSyntaxDecompressionName(syntax) {
+  let algo;
+  if (isJpeg2000TransferSyntax(syntax)) {
     algo = 'jpeg2000';
-  } else if (dwv.dicom.isJpegBaselineTransferSyntax(syntax)) {
+  } else if (isJpegBaselineTransferSyntax(syntax)) {
     algo = 'jpeg-baseline';
-  } else if (dwv.dicom.isJpegLosslessTransferSyntax(syntax)) {
+  } else if (isJpegLosslessTransferSyntax(syntax)) {
     algo = 'jpeg-lossless';
-  } else if (dwv.dicom.isRleTransferSyntax(syntax)) {
+  } else if (isRleTransferSyntax(syntax)) {
     algo = 'rle';
   }
   return algo;
-};
+}
 
 /**
  * Tell if a given syntax is supported for reading.
@@ -700,81 +436,85 @@ dwv.dicom.getSyntaxDecompressionName = function (syntax) {
  * @param {string} syntax The transfer syntax to test.
  * @returns {boolean} True if a supported syntax.
  */
-dwv.dicom.isReadSupportedTransferSyntax = function (syntax) {
-
-  // Unsupported:
-  // "1.2.840.10008.1.2.1.99": Deflated Explicit VR - Little Endian
-  // "1.2.840.10008.1.2.4.100": MPEG2 Image Compression
-  // dwv.dicom.isJpegRetiredTransferSyntax(syntax): non supported JPEG
-  // dwv.dicom.isJpeglsTransferSyntax(syntax): JPEG-LS
-
-  return (syntax === '1.2.840.10008.1.2' || // Implicit VR - Little Endian
-        syntax === '1.2.840.10008.1.2.1' || // Explicit VR - Little Endian
-        syntax === '1.2.840.10008.1.2.2' || // Explicit VR - Big Endian
-        dwv.dicom.isJpegBaselineTransferSyntax(syntax) || // JPEG baseline
-        dwv.dicom.isJpegLosslessTransferSyntax(syntax) || // JPEG Lossless
-        dwv.dicom.isJpeg2000TransferSyntax(syntax) || // JPEG 2000
-        dwv.dicom.isRleTransferSyntax(syntax)); // RLE
-};
+function isReadSupportedTransferSyntax(syntax) {
+  return (syntax === transferSyntaxKeywords.ImplicitVRLittleEndian ||
+    syntax === transferSyntaxKeywords.ExplicitVRLittleEndian ||
+    syntax === transferSyntaxKeywords.ExplicitVRBigEndian ||
+    isJpegBaselineTransferSyntax(syntax) ||
+    isJpegLosslessTransferSyntax(syntax) ||
+    isJpeg2000TransferSyntax(syntax) ||
+    isRleTransferSyntax(syntax));
+}
 
 /**
- * Get the transfer syntax name.
- * Reference: [UID Values]{@link http://dicom.nema.org/dicom/2013/output/chtml/part06/chapter_A.html}.
+ * Get a transfer syntax name from its UID.
  *
- * @param {string} syntax The transfer syntax.
- * @returns {string} The name of the transfer syntax.
+ * @param {string} syntax The transfer syntax UID value.
+ * @returns {string} The transfer syntax name.
  */
-dwv.dicom.getTransferSyntaxName = function (syntax) {
-  var name = 'Unknown';
-  if (syntax === '1.2.840.10008.1.2') {
-    // Implicit VR - Little Endian
-    name = 'Little Endian Implicit';
-  } else if (syntax === '1.2.840.10008.1.2.1') {
-    // Explicit VR - Little Endian
-    name = 'Little Endian Explicit';
-  } else if (syntax === '1.2.840.10008.1.2.1.99') {
-    // Deflated Explicit VR - Little Endian
-    name = 'Little Endian Deflated Explicit';
-  } else if (syntax === '1.2.840.10008.1.2.2') {
-    // Explicit VR - Big Endian
-    name = 'Big Endian Explicit';
-  } else if (dwv.dicom.isJpegBaselineTransferSyntax(syntax)) {
-    // JPEG baseline
-    if (syntax === '1.2.840.10008.1.2.4.50') {
-      name = 'JPEG Baseline';
-    } else { // *.51
-      name = 'JPEG Extended, Process 2+4';
-    }
-  } else if (dwv.dicom.isJpegLosslessTransferSyntax(syntax)) {
-    // JPEG Lossless
-    if (syntax === '1.2.840.10008.1.2.4.57') {
-      name = 'JPEG Lossless, Nonhierarchical (Processes 14)';
-    } else { // *.70
-      name = 'JPEG Lossless, Non-hierarchical, 1st Order Prediction';
-    }
-  } else if (dwv.dicom.isJpegRetiredTransferSyntax(syntax)) {
-    // Retired JPEG
-    name = 'Retired JPEG';
-  } else if (dwv.dicom.isJpeglsTransferSyntax(syntax)) {
-    // JPEG-LS
-    name = 'JPEG-LS';
-  } else if (dwv.dicom.isJpeg2000TransferSyntax(syntax)) {
-    // JPEG 2000
-    if (syntax === '1.2.840.10008.1.2.4.91') {
-      name = 'JPEG 2000 (Lossless or Lossy)';
-    } else { // *.90
-      name = 'JPEG 2000 (Lossless only)';
-    }
-  } else if (syntax === '1.2.840.10008.1.2.4.100') {
-    // MPEG2 Image Compression
-    name = 'MPEG2';
-  } else if (dwv.dicom.isRleTransferSyntax(syntax)) {
-    // RLE (lossless)
-    name = 'RLE';
+export function getTransferSyntaxName(syntax) {
+  let name = 'Unknown';
+  if (typeof transferSyntaxes[syntax] !== 'undefined') {
+    name = transferSyntaxes[syntax];
   }
-  // return
   return name;
-};
+}
+
+/**
+ * Guess the transfer syntax from the first data element.
+ *
+ * See {@link https://github.com/ivmartel/dwv/issues/188}
+ *   (Allow to load DICOM with no DICM preamble) for more details.
+ *
+ * @param {DataElement} firstDataElement The first data element
+ *   of the DICOM header.
+ * @returns {DataElement} The transfer syntax data element.
+ */
+function guessTransferSyntax(firstDataElement) {
+  const oEightGroupBigEndian = '0800';
+  const oEightGroupLittleEndian = '0008';
+  // check that group is 0008
+  const group = firstDataElement.tag.getGroup();
+  if (group !== oEightGroupBigEndian &&
+    group !== oEightGroupLittleEndian) {
+    throw new Error(
+      'Not a valid DICOM file (invalid DICM word found' +
+      ' and first element not in 0008 group)'
+    );
+  }
+  // reasonable assumption: 2 uppercase characters => explicit vr
+  const vr = firstDataElement.vr;
+  const vr0 = vr.charCodeAt(0);
+  const vr1 = vr.charCodeAt(1);
+  const implicit = (vr0 >= 65 && vr0 <= 90 && vr1 >= 65 && vr1 <= 90)
+    ? false : true;
+  // guess transfer syntax
+  let syntax;
+  if (group === oEightGroupLittleEndian) {
+    if (implicit) {
+      syntax = transferSyntaxKeywords.ImplicitVRLittleEndian;
+    } else {
+      syntax = transferSyntaxKeywords.ExplicitVRLittleEndian;
+    }
+  } else if (implicit) {
+    // ImplicitVRBigEndian: impossible
+    throw new Error(
+      'Not a valid DICOM file (no magic DICM word found' +
+      'and implicit VR big endian detected)'
+    );
+  } else {
+    syntax = transferSyntaxKeywords.ExplicitVRBigEndian;
+  }
+  // set transfer syntax data element
+  const dataElement = new DataElement('UI');
+  dataElement.tag = getTransferSyntaxUIDTag();
+  dataElement.value = [syntax];
+  dataElement.vl = dataElement.value[0].length;
+  dataElement.startOffset = firstDataElement.startOffset;
+  dataElement.endOffset = dataElement.startOffset + dataElement.vl;
+
+  return dataElement;
+}
 
 /**
  * Get the appropriate TypedArray in function of arguments.
@@ -783,79 +523,83 @@ dwv.dicom.getTransferSyntaxName = function (syntax) {
  *   the data: [8, 16, 32].
  * @param {number} pixelRepresentation The pixel representation,
  *   0:unsigned;1:signed.
- * @param {dwv.image.Size} size The size of the new array.
- * @returns {Array} The good typed array.
+ * @param {number} size The size of the new array.
+ * @returns {IntTypedArray} The good typed array.
  */
-dwv.dicom.getTypedArray = function (bitsAllocated, pixelRepresentation, size) {
-  var res = null;
-  if (bitsAllocated === 8) {
-    if (pixelRepresentation === 0) {
-      res = new Uint8Array(size);
-    } else {
-      res = new Int8Array(size);
+export function getTypedArray(bitsAllocated, pixelRepresentation, size) {
+  let res = null;
+  try {
+    if (bitsAllocated === 1 || bitsAllocated === 8) {
+      if (pixelRepresentation === 0) {
+        res = new Uint8Array(size);
+      } else {
+        res = new Int8Array(size);
+      }
+    } else if (bitsAllocated === 16) {
+      if (pixelRepresentation === 0) {
+        res = new Uint16Array(size);
+      } else {
+        res = new Int16Array(size);
+      }
+    } else if (bitsAllocated === 32) {
+      if (pixelRepresentation === 0) {
+        res = new Uint32Array(size);
+      } else {
+        res = new Int32Array(size);
+      }
     }
-  } else if (bitsAllocated === 16) {
-    if (pixelRepresentation === 0) {
-      res = new Uint16Array(size);
-    } else {
-      res = new Int16Array(size);
-    }
-  } else if (bitsAllocated === 32) {
-    if (pixelRepresentation === 0) {
-      res = new Uint32Array(size);
-    } else {
-      res = new Int32Array(size);
-    }
+  } catch (error) {
+    logAllocationError(error, size);
   }
   return res;
-};
+}
 
 /**
- * Does this Value Representation (VR) have a 32bit Value Length (VL).
- * Ref: [Data Element explicit]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/chapter_7.html#table_7.1-1}.
+ * Get a new TypedArray of the same type as the input one
+ *   (preserves float arrays, unlike `getTypedArray`).
  *
- * @param {string} vr The data Value Representation (VR).
- * @returns {boolean} True if this VR has a 32-bit VL.
+ * @param {TypedArray} array The model array.
+ * @param {number} size The size of the new array.
+ * @returns {TypedArray} The new array or null if the allocation failed.
  */
-dwv.dicom.is32bitVLVR = function (vr) {
-  // added locally used 'ox'
-  return (vr === 'OB' ||
-    vr === 'OW' ||
-    vr === 'OF' ||
-    vr === 'ox' ||
-    vr === 'UT' ||
-    vr === 'SQ' ||
-    vr === 'UN');
-};
+export function getTypedArrayLike(array, size) {
+  let res = null;
+  try {
+    const ArrayConstructor =
+      /** @type {function(new:TypedArray, number)} */ (array.constructor);
+    res = new ArrayConstructor(size);
+  } catch (error) {
+    logAllocationError(error, size);
+  }
+  return res;
+}
 
 /**
- * Does this tag have a VR.
- * Basically the Item, ItemDelimitationItem and SequenceDelimitationItem tags.
+ * Log a typed array allocation error.
  *
- * @param {string} group The tag group.
- * @param {string} element The tag element.
- * @returns {boolean} True if this tar has a VR.
+ * @param {Error} error The allocation error.
+ * @param {number} size The size of the array.
  */
-dwv.dicom.isTagWithVR = function (group, element) {
-  return !(group === '0xFFFE' &&
-    (element === '0xE000' || element === '0xE00D' || element === '0xE0DD')
-  );
-};
-
+function logAllocationError(error, size) {
+  if (error instanceof RangeError) {
+    const powerOf2 = Math.floor(Math.log(size) / Math.log(2));
+    logger.error(`Cannot allocate array of size: ${
+      size } (>2^${powerOf2}).`);
+  }
+}
 
 /**
  * Get the number of bytes occupied by a data element prefix,
- *   i.e. without its value.
+ *   (without its value).
  *
- * @param {string} vr The Value Representation of the element.
- * @param {boolean} isImplicit Does the data use implicit VR?
- * @returns {number} The size of the element prefix.
  * WARNING: this is valid for tags with a VR, if not sure use
  *   the 'isTagWithVR' function first.
- * Reference:
- * - [Data Element explicit]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/chapter_7.html#table_7.1-1},
- * - [Data Element implicit]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/sect_7.5.html#table_7.5-1}.
  *
+ * Reference:
+ * - [Data Element explicit]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/chapter_7.html#table_7.1-1},
+ * - [Data Element implicit]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/sect_7.5.2.html#table_7.5-1}.
+ *
+ * ```
  * | Tag | VR  | VL | Value |
  * | 4   | 2   | 2  | X     | -> regular explicit: 8 + X
  * | 4   | 2+2 | 4  | X     | -> 32bit VL: 12 + X
@@ -865,680 +609,919 @@ dwv.dicom.isTagWithVR = function (group, element) {
  *
  * | Tag | Len | Value |
  * | 4   | 4   | X     | -> item: 8 + X
+ * ```
+ *
+ * @param {string} vr The Value Representation of the element.
+ * @param {boolean} isImplicit Does the data use implicit VR?
+ * @returns {number} The size of the element prefix.
  */
-dwv.dicom.getDataElementPrefixByteSize = function (vr, isImplicit) {
-  return isImplicit ? 8 : dwv.dicom.is32bitVLVR(vr) ? 12 : 8;
+export function getDataElementPrefixByteSize(vr, isImplicit) {
+  return isImplicit ? 8 : is32bitVLVR(vr) ? 12 : 8;
+}
+
+/**
+ * Is the input VR a known VR.
+ *
+ * @param {string} vr The vr to test.
+ * @returns {boolean} True if known.
+ */
+function isKnownVR(vr) {
+  const extraVrTypes = ['NONE', 'ox', 'xx', 'xs'];
+  const knownTypes = Object.keys(vrTypes).concat(extraVrTypes);
+  return knownTypes.includes(vr);
+}
+
+/**
+ * Small list of used tag keys.
+ */
+const TagKeys = {
+  TransferSyntax: '00020010',
+  SpecificCharacterSet: '00080005',
+  Rows: '00280010',
+  Columns: '00280011',
+  NumberOfFrames: '00280008',
+  BitsAllocated: '00280100',
+  PixelRepresentation: '00280103',
+  PixelData: '7FE00010'
 };
 
 /**
  * DicomParser class.
  *
- * @class
+ * @example
+ * import {DicomParser} from '//esm.sh/dwv';
+ * // XMLHttpRequest onload callback
+ * const onload = function (event) {
+ *   // setup the dicom parser
+ *   const dicomParser = new DicomParser();
+ *   // parse the buffer
+ *   dicomParser.parse(event.target.response);
+ *   // get the dicom tags
+ *   const tags = dicomParser.getDicomElements();
+ *   // display the modality
+ *   const div = document.getElementById('dwv');
+ *   div.appendChild(document.createTextNode(
+ *     'Modality: ' + tags['00080060'].value[0]
+ *   ));
+ * };
+ * // DICOM file request
+ * const request = new XMLHttpRequest();
+ * const url = 'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323851.dcm';
+ * request.open('GET', url);
+ * request.responseType = 'arraybuffer';
+ * request.onload = onload;
+ * request.send();
  */
-dwv.dicom.DicomParser = function () {
-  // check logger
-  if (typeof dwv.logger === 'undefined') {
-    dwv.logger = dwv.utils.logger.console;
-  }
+export class DicomParser {
 
   /**
    * The list of DICOM elements.
    *
-   * @type {Array}
+   * @type {DataElements}
    */
-  this.dicomElements = {};
+  #dataElements = {};
 
   /**
    * Default character set (optional).
    *
-   * @private
    * @type {string}
    */
-  var defaultCharacterSet;
+  #defaultCharacterSet;
+
+  /**
+   * Default text decoder.
+   *
+   * @type {DefaultTextDecoder}
+   */
+  #defaultTextDecoder = new DefaultTextDecoder();
+
+  /**
+   * Special text decoder.
+   *
+   * @type {DefaultTextDecoder|TextDecoder}
+   */
+  #textDecoder = this.#defaultTextDecoder;
+
+  /**
+   * Flag to remove escape sequences before decoding special strings.
+   *
+   * @type {boolean}
+   */
+  #removeEscapeSequences = false;
+
+  /**
+   * Decode an input string buffer using the default text decoder.
+   *
+   * @param {Uint8Array} buffer The buffer to decode.
+   * @returns {string} The decoded string.
+   */
+  #decodeString(buffer) {
+    return this.#defaultTextDecoder.decode(buffer);
+  }
+
+  /**
+   * Decode an input string buffer using the 'special' text decoder.
+   *
+   * @param {Uint8Array} buffer The buffer to decode.
+   * @returns {string} The decoded string.
+   */
+  #decodeSpecialString(buffer) {
+    if (this.#removeEscapeSequences) {
+      buffer = removeEscapeSequences(buffer);
+    }
+    return this.#textDecoder.decode(buffer);
+  }
+
   /**
    * Get the default character set.
    *
    * @returns {string} The default character set.
    */
-  this.getDefaultCharacterSet = function () {
-    return defaultCharacterSet;
-  };
+  getDefaultCharacterSet() {
+    return this.#defaultCharacterSet;
+  }
+
   /**
    * Set the default character set.
-   * param {String} The character set.
    *
    * @param {string} characterSet The input character set.
    */
-  this.setDefaultCharacterSet = function (characterSet) {
-    defaultCharacterSet = characterSet;
-  };
-};
-
-/**
- * Get the raw DICOM data elements.
- *
- * @returns {object} The raw DICOM elements.
- */
-dwv.dicom.DicomParser.prototype.getRawDicomElements = function () {
-  return this.dicomElements;
-};
-
-/**
- * Get the DICOM data elements.
- *
- * @returns {object} The DICOM elements.
- */
-dwv.dicom.DicomParser.prototype.getDicomElements = function () {
-  return new dwv.dicom.DicomElementsWrapper(this.dicomElements);
-};
-
-/**
- * Read a DICOM tag.
- *
- * @param {object} reader The raw data reader.
- * @param {number} offset The offset where to start to read.
- * @returns {object} An object containing the tags 'group',
- *   'element' and 'name'.
- */
-dwv.dicom.DicomParser.prototype.readTag = function (reader, offset) {
-  // group
-  var group = reader.readHex(offset);
-  offset += Uint16Array.BYTES_PER_ELEMENT;
-  // element
-  var element = reader.readHex(offset);
-  offset += Uint16Array.BYTES_PER_ELEMENT;
-  // name
-  var name = dwv.dicom.getGroupElementKey(group, element);
-  // return
-  return {
-    group: group,
-    element: element,
-    name: name,
-    endOffset: offset
-  };
-};
-
-/**
- * Read an item data element.
- *
- * @param {object} reader The raw data reader.
- * @param {number} offset The offset where to start to read.
- * @param {boolean} implicit Is the DICOM VR implicit?
- * @returns {object} The item data as a list of data elements.
- */
-dwv.dicom.DicomParser.prototype.readItemDataElement = function (
-  reader, offset, implicit) {
-  var itemData = {};
-
-  // read the first item
-  var item = this.readDataElement(reader, offset, implicit);
-  offset = item.endOffset;
-
-  // exit if it is a sequence delimitation item
-  var isSeqDelim = (item.tag.name === 'xFFFEE0DD');
-  if (isSeqDelim) {
-    return {data: itemData,
-      endOffset: item.endOffset,
-      isSeqDelim: isSeqDelim};
+  setDefaultCharacterSet(characterSet) {
+    this.#defaultCharacterSet = characterSet;
   }
 
-  // store it
-  itemData[item.tag.name] = item;
+  /**
+   * Set the text decoder character set.
+   *
+   * @param {string} characterSet The input character set.
+   */
+  setDecoderCharacterSet(characterSet) {
+    /**
+     * The text decoder.
+     *
+     * Ref: {@link https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder}.
+     *
+     * @external TextDecoder
+     */
+    this.#textDecoder = new TextDecoder(characterSet);
+  }
 
-  if (item.vl !== 'u/l') {
-    // explicit VR items
-    // not empty
-    if (item.vl !== 0) {
-      // read until the end offset
-      var endOffset = offset;
+  // not using type DataElements since the typedef is not exported with the API
+
+  /**
+   * Get the DICOM data elements.
+   *
+   * @returns {Record<string, DataElement>} The data elements.
+   */
+  getDicomElements() {
+    return this.#dataElements;
+  }
+
+  /**
+   * Safely get an elements' first value from the parsed elements.
+   *
+   * @param {string} key The tag key as for example '00100020'.
+   * @returns {any|undefined} The elements' value or undefined.
+   */
+  safeGet(key) {
+    return safeGet(this.#dataElements, key);
+  }
+
+  /**
+   * Read a DICOM tag.
+   *
+   * @param {DataReader} reader The raw data reader.
+   * @param {number} offset The offset where to start to read.
+   * @returns {object} An object containing the tag and the end offset.
+   */
+  #readTag(reader, offset) {
+    // group
+    const group = reader.readHex(offset);
+    offset += Uint16Array.BYTES_PER_ELEMENT;
+    // element
+    const element = reader.readHex(offset);
+    offset += Uint16Array.BYTES_PER_ELEMENT;
+    // return
+    return {
+      tag: new Tag(group, element),
+      endOffset: offset
+    };
+  }
+
+  /**
+   * Read an item data element.
+   *
+   * @param {DataReader} reader The raw data reader.
+   * @param {number} offset The offset where to start to read.
+   * @param {boolean} implicit Is the DICOM VR implicit?
+   * @returns {object} The item data as a list of data elements.
+   */
+  #readItemDataElement(reader, offset, implicit) {
+    const itemData = {};
+
+    // read the first item
+    let item = this.#readDataElement(reader, offset, implicit);
+    offset = item.endOffset;
+
+    // exit if it is a sequence delimitation item
+    if (isSequenceDelimitationItemTag(item.tag)) {
+      return {
+        data: itemData,
+        endOffset: item.endOffset,
+        isSeqDelim: true
+      };
+    }
+
+    // store item (mainly to keep vl)
+    itemData[item.tag.getKey()] = {
+      tag: item.tag,
+      vr: 'NONE',
+      vl: item.vl,
+      undefinedLength: item.undefinedLength
+    };
+
+    if (!item.undefinedLength) {
+      // explicit VR item: read until the end offset
+      const endOffset = offset;
       offset -= item.vl;
       while (offset < endOffset) {
-        item = this.readDataElement(reader, offset, implicit);
+        item = this.#readDataElement(reader, offset, implicit);
         offset = item.endOffset;
-        itemData[item.tag.name] = item;
+        itemData[item.tag.getKey()] = item;
+      }
+    } else {
+      // implicit VR item: read until the item delimitation item
+      let isItemDelim = false;
+      while (!isItemDelim) {
+        item = this.#readDataElement(reader, offset, implicit);
+        offset = item.endOffset;
+        isItemDelim = isItemDelimitationItemTag(item.tag);
+        if (!isItemDelim) {
+          itemData[item.tag.getKey()] = item;
+        }
       }
     }
-  } else {
-    // implicit VR items
-    // read until the item delimitation item
-    var isItemDelim = false;
-    while (!isItemDelim) {
-      item = this.readDataElement(reader, offset, implicit);
-      offset = item.endOffset;
-      isItemDelim = (item.tag.name === 'xFFFEE00D');
-      if (!isItemDelim) {
-        itemData[item.tag.name] = item;
-      }
-    }
+
+    return {
+      data: itemData,
+      endOffset: offset,
+      isSeqDelim: false
+    };
   }
 
-  return {
-    data: itemData,
-    endOffset: offset,
-    isSeqDelim: false
-  };
-};
+  /**
+   * Read the pixel item data element.
+   * Ref: [Single frame fragments]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/sect_A.4.html#table_A.4-1}.
+   *
+   * @param {DataReader} reader The raw data reader.
+   * @param {number} offset The offset where to start to read.
+   * @param {boolean} implicit Is the DICOM VR implicit?
+   * @returns {object} The item data as an array of data elements.
+   */
+  #readPixelItemDataElement(
+    reader, offset, implicit) {
+    const itemData = [];
 
-/**
- * Read the pixel item data element.
- * Ref: [Single frame fragments]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/sect_A.4.html#table_A.4-1}.
- *
- * @param {object} reader The raw data reader.
- * @param {number} offset The offset where to start to read.
- * @param {boolean} implicit Is the DICOM VR implicit?
- * @returns {Array} The item data as an array of data elements.
- */
-dwv.dicom.DicomParser.prototype.readPixelItemDataElement = function (
-  reader, offset, implicit) {
-  var itemData = [];
-
-  // first item: basic offset table
-  var item = this.readDataElement(reader, offset, implicit);
-  var offsetTableVl = item.vl;
-  offset = item.endOffset;
-
-  // read until the sequence delimitation item
-  var isSeqDelim = false;
-  while (!isSeqDelim) {
-    item = this.readDataElement(reader, offset, implicit);
+    // first item: basic offset table
+    let item = this.#readDataElement(reader, offset, implicit);
+    const offsetTableVl = item.vl;
     offset = item.endOffset;
-    isSeqDelim = (item.tag.name === 'xFFFEE0DD');
-    if (!isSeqDelim) {
-      itemData.push(item.value);
+
+    // read until the sequence delimitation item
+    let isSeqDelim = false;
+    while (!isSeqDelim) {
+      item = this.#readDataElement(reader, offset, implicit);
+      offset = item.endOffset;
+      isSeqDelim = isSequenceDelimitationItemTag(item.tag);
+      if (!isSeqDelim) {
+        // force pixel item vr to OB
+        item.vr = 'OB';
+        itemData.push(item);
+      }
     }
+
+    return {
+      data: itemData,
+      endOffset: offset,
+      offsetTableVl
+    };
   }
 
-  return {
-    data: itemData,
-    endOffset: offset,
-    offsetTableVl: offsetTableVl
-  };
-};
+  /**
+   * Read a DICOM data element.
+   *
+   * Reference: [DICOM VRs]{@link http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/sect_6.2.html#table_6.2-1}.
+   *
+   * @param {DataReader} reader The raw data reader.
+   * @param {number} offset The offset where to start to read.
+   * @param {boolean} implicit Is the DICOM VR implicit?
+   * @param {Tag} [untilTag] Optional tag to stop the reading once reached,
+   *   the returned element will only contain the tag.
+   * @returns {DataElement} The data element.
+   */
+  #readDataElement(reader, offset, implicit, untilTag) {
+    // Tag: group, element
+    const readTagRes = this.#readTag(reader, offset);
+    const tag = readTagRes.tag;
 
-/**
- * Read a DICOM data element.
- * Reference: [DICOM VRs]{@link http://dicom.nema.org/dicom/2013/output/chtml/part05/sect_6.2.html#table_6.2-1}.
- *
- * @param {object} reader The raw data reader.
- * @param {number} offset The offset where to start to read.
- * @param {boolean} implicit Is the DICOM VR implicit?
- * @returns {object} An object containing the element
- *   'tag', 'vl', 'vr', 'data' and 'endOffset'.
- */
-dwv.dicom.DicomParser.prototype.readDataElement = function (
-  reader, offset, implicit) {
-  // Tag: group, element
-  var tag = this.readTag(reader, offset);
-  offset = tag.endOffset;
+    if (typeof untilTag !== 'undefined' &&
+      tag.equals(untilTag)) {
+      const element = new DataElement('');
+      element.tag = tag;
+      return element;
+    }
 
-  // Value Representation (VR)
-  var vr = null;
-  var is32bitVLVR = false;
-  if (dwv.dicom.isTagWithVR(tag.group, tag.element)) {
-    // implicit VR
-    if (implicit) {
-      vr = 'UN';
-      var dict = dwv.dicom.dictionary;
-      if (typeof dict[tag.group] !== 'undefined' &&
-                    typeof dict[tag.group][tag.element] !== 'undefined') {
-        vr = dwv.dicom.dictionary[tag.group][tag.element][0];
-      }
-      is32bitVLVR = true;
-    } else {
-      vr = reader.readString(offset, 2);
-      offset += 2 * Uint8Array.BYTES_PER_ELEMENT;
-      is32bitVLVR = dwv.dicom.is32bitVLVR(vr);
-      // reserved 2 bytes
-      if (is32bitVLVR) {
+    offset = readTagRes.endOffset;
+
+    // Value Representation (VR)
+    let vr = 'NONE';
+    let is32bitVL = true;
+    if (tag.isWithVR()) {
+      // implicit VR
+      if (implicit) {
+        vr = getDicomTagInfo(tag)?.getVr();
+        if (typeof vr === 'undefined') {
+          vr = 'UN';
+        }
+        is32bitVL = true;
+      } else {
+        vr = this.#decodeString(reader.readUint8Array(offset, 2));
         offset += 2 * Uint8Array.BYTES_PER_ELEMENT;
+        is32bitVL = is32bitVLVR(vr);
+        // reserved 2 bytes
+        if (is32bitVL) {
+          offset += 2 * Uint8Array.BYTES_PER_ELEMENT;
+        }
       }
     }
-  } else {
-    vr = 'UN';
-    is32bitVLVR = true;
-  }
 
-  // Value Length (VL)
-  var vl = 0;
-  if (is32bitVLVR) {
-    vl = reader.readUint32(offset);
-    offset += Uint32Array.BYTES_PER_ELEMENT;
-  } else {
-    vl = reader.readUint16(offset);
-    offset += Uint16Array.BYTES_PER_ELEMENT;
-  }
+    // check vr
+    if (!isKnownVR(vr)) {
+      logger.warn(`Unknown VR: ${ vr
+      } (for tag ${tag.getKey()}), treating as 'UN'`);
+      vr = 'UN';
+    }
 
-  // check the value of VL
-  var vlString = vl;
-  if (vl === 0xffffffff) {
-    vlString = 'u/l';
-    vl = 0;
-  }
-
-  // treat private tag with unknown VR and zero VL as a sequence (see #799)
-  if (dwv.dicom.isPrivateGroup(tag.group) && vr === 'UN' && vl === 0) {
-    vr = 'SQ';
-  }
-
-  var startOffset = offset;
-
-  // data
-  var data = null;
-  var isPixelData = (tag.name === 'x7FE00010');
-  // pixel data sequence (implicit)
-  if (isPixelData && vlString === 'u/l') {
-    var pixItemData = this.readPixelItemDataElement(reader, offset, implicit);
-    offset = pixItemData.endOffset;
-    startOffset += pixItemData.offsetTableVl;
-    data = pixItemData.data;
-  } else if (isPixelData &&
-    (vr === 'OB' || vr === 'OW' || vr === 'OF' || vr === 'ox')) {
-    // BitsAllocated
-    var bitsAllocated = 16;
-    if (typeof this.dicomElements.x00280100 !== 'undefined') {
-      bitsAllocated = this.dicomElements.x00280100.value[0];
+    // Value Length (VL)
+    let vl;
+    if (is32bitVL) {
+      vl = reader.readUint32(offset);
+      offset += Uint32Array.BYTES_PER_ELEMENT;
     } else {
-      dwv.logger.warn('Reading DICOM pixel data with default bitsAllocated.');
+      vl = reader.readUint16(offset);
+      offset += Uint16Array.BYTES_PER_ELEMENT;
     }
-    if (bitsAllocated === 8 && vr === 'OW') {
-      dwv.logger.warn(
-        'Reading DICOM pixel data with vr=OW' +
-        ' and bitsAllocated=8 (should be 16).'
-      );
+
+    // check the value of VL
+    let undefinedLength = false;
+    if (vl === 0xffffffff) {
+      undefinedLength = true;
+      vl = 0;
     }
-    if (bitsAllocated === 16 && vr === 'OB') {
-      dwv.logger.warn(
-        'Reading DICOM pixel data with vr=OB' +
-        ' and bitsAllocated=16 (should be 8).'
-      );
+
+    // treat private tag with unknown VR and zero VL as a sequence (see #799)
+    if (tag.isPrivate() && vr === 'UN' && vl === 0) {
+      vr = 'SQ';
     }
-    // PixelRepresentation 0->unsigned, 1->signed
-    var pixelRepresentation = 0;
-    if (typeof this.dicomElements.x00280103 !== 'undefined') {
-      pixelRepresentation = this.dicomElements.x00280103.value[0];
-    } else {
-      dwv.logger.warn(
-        'Reading DICOM pixel data with default pixelRepresentation.'
-      );
-    }
-    // read
-    if (bitsAllocated === 8) {
-      if (pixelRepresentation === 0) {
-        data = reader.readUint8Array(offset, vl);
+
+    let startOffset = offset;
+    let endOffset = startOffset + vl;
+
+    // read sequence elements
+    let data;
+    if (isAnyPixelDataTag(tag) && undefinedLength) {
+      // pixel data sequence (implicit)
+      const pixItemData =
+        this.#readPixelItemDataElement(reader, offset, implicit);
+      offset = pixItemData.endOffset;
+      startOffset += pixItemData.offsetTableVl;
+      data = pixItemData.data;
+      endOffset = offset;
+      vl = offset - startOffset;
+    } else if (vr === 'SQ') {
+      // sequence
+      data = [];
+      let itemData;
+      if (!undefinedLength) {
+        if (vl !== 0) {
+          // explicit VR sequence: read until the end offset
+          const sqEndOffset = offset + vl;
+          while (offset < sqEndOffset) {
+            itemData = this.#readItemDataElement(reader, offset, implicit);
+            data.push(itemData.data);
+            offset = itemData.endOffset;
+          }
+          endOffset = offset;
+          vl = offset - startOffset;
+        }
       } else {
-        data = reader.readInt8Array(offset, vl);
-      }
-    } else if (bitsAllocated === 16) {
-      if (pixelRepresentation === 0) {
-        data = reader.readUint16Array(offset, vl);
-      } else {
-        data = reader.readInt16Array(offset, vl);
-      }
-    } else if (bitsAllocated === 32) {
-      if (pixelRepresentation === 0) {
-        data = reader.readUint32Array(offset, vl);
-      } else {
-        data = reader.readInt32Array(offset, vl);
-      }
-    } else if (bitsAllocated === 64) {
-      if (pixelRepresentation === 0) {
-        data = reader.readUint64Array(offset, vl);
-      } else {
-        data = reader.readInt64Array(offset, vl);
-      }
-    }
-    offset += vl;
-  } else if (vr === 'OB') {
-    data = reader.readUint8Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'OW') {
-    data = reader.readUint16Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'OF') {
-    data = reader.readUint32Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'OD') {
-    data = reader.readUint64Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'US') {
-    data = reader.readUint16Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'UL') {
-    data = reader.readUint32Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'SS') {
-    data = reader.readInt16Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'SL') {
-    data = reader.readInt32Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'FL') {
-    data = reader.readFloat32Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'FD') {
-    data = reader.readFloat64Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'xs') {
-    // PixelRepresentation 0->unsigned, 1->signed
-    var pixelRep = 0;
-    if (typeof this.dicomElements.x00280103 !== 'undefined') {
-      pixelRep = this.dicomElements.x00280103.value[0];
-    } else {
-      dwv.logger.warn(
-        'Reading DICOM pixel data with default pixelRepresentation.');
-    }
-    // read
-    if (pixelRep === 0) {
-      data = reader.readUint16Array(offset, vl);
-    } else {
-      data = reader.readInt16Array(offset, vl);
-    }
-    offset += vl;
-  } else if (vr === 'AT') {
-    // attribute
-    var raw = reader.readUint16Array(offset, vl);
-    offset += vl;
-    data = [];
-    for (var i = 0, leni = raw.length; i < leni; i += 2) {
-      var stri = raw[i].toString(16);
-      var stri1 = raw[i + 1].toString(16);
-      var str = '(';
-      str += '0000'.substr(0, 4 - stri.length) + stri.toUpperCase();
-      str += ',';
-      str += '0000'.substr(0, 4 - stri1.length) + stri1.toUpperCase();
-      str += ')';
-      data.push(str);
-    }
-  } else if (vr === 'UN') {
-    // not available
-    data = reader.readUint8Array(offset, vl);
-    offset += vl;
-  } else if (vr === 'SQ') {
-    // sequence
-    data = [];
-    var itemData;
-    // explicit VR sequence
-    if (vlString !== 'u/l') {
-      // not empty
-      if (vl !== 0) {
-        var sqEndOffset = offset + vl;
-        while (offset < sqEndOffset) {
-          itemData = this.readItemDataElement(reader, offset, implicit);
-          data.push(itemData.data);
+        // implicit VR sequence: read until the sequence delimitation item
+        let isSeqDelim = false;
+        while (!isSeqDelim) {
+          itemData = this.#readItemDataElement(reader, offset, implicit);
+          isSeqDelim = itemData.isSeqDelim;
           offset = itemData.endOffset;
+          // do not store the delimitation item
+          if (!isSeqDelim) {
+            data.push(itemData.data);
+          }
         }
-      }
-    } else {
-      // implicit VR sequence
-      // read until the sequence delimitation item
-      var isSeqDelim = false;
-      while (!isSeqDelim) {
-        itemData = this.readItemDataElement(reader, offset, implicit);
-        isSeqDelim = itemData.isSeqDelim;
-        offset = itemData.endOffset;
-        // do not store the delimitation item
-        if (!isSeqDelim) {
-          data.push(itemData.data);
-        }
+        endOffset = offset;
+        vl = offset - startOffset;
       }
     }
-  } else {
-    // raw
-    if (vr === 'SH' || vr === 'LO' || vr === 'ST' ||
-            vr === 'PN' || vr === 'LT' || vr === 'UT') {
-      data = reader.readSpecialString(offset, vl);
-    } else {
-      data = reader.readString(offset, vl);
+
+    // return
+    const element = new DataElement(vr);
+    element.tag = tag;
+    element.vl = vl;
+    element.startOffset = startOffset;
+    element.endOffset = endOffset;
+    // only set if true (only for sequences and items)
+    if (undefinedLength) {
+      element.undefinedLength = undefinedLength;
     }
-    offset += vl;
-    data = data.split('\\');
+    if (data) {
+      element.items = data;
+    }
+    return element;
   }
 
-  // return
-  return {
-    tag: tag,
-    vr: vr,
-    vl: vlString,
-    value: data,
-    startOffset: startOffset,
-    endOffset: offset
-  };
-};
+  /**
+   * Interpret the data of an element.
+   *
+   * @param {DataElement} element The data element.
+   * @param {DataReader} reader The raw data reader.
+   * @param {object} [pixelTags] Pixel data related tags.
+   * @returns {object} The interpreted data.
+   */
+  #interpretElement(element, reader, pixelTags) {
 
-/**
- * Parse the complete DICOM file (given as input to the class).
- * Fills in the member object 'dicomElements'.
- *
- * @param {object} buffer The input array buffer.
- */
-dwv.dicom.DicomParser.prototype.parse = function (buffer) {
-  var offset = 0;
-  var implicit = false;
-  var syntax = '';
-  var dataElement = null;
-  // default readers
-  var metaReader = new dwv.dicom.DataReader(buffer);
-  var dataReader = new dwv.dicom.DataReader(buffer);
+    const tag = element.tag;
+    const vl = element.vl;
+    const vr = element.vr;
+    const offset = element.startOffset;
 
-  // 128 -> 132: magic word
-  offset = 128;
-  var magicword = metaReader.readString(offset, 4);
-  offset += 4 * Uint8Array.BYTES_PER_ELEMENT;
-  if (magicword === 'DICM') {
-    // 0x0002, 0x0000: FileMetaInformationGroupLength
-    dataElement = this.readDataElement(metaReader, offset, false);
-    offset = dataElement.endOffset;
-    // store the data element
-    this.dicomElements[dataElement.tag.name] = dataElement;
-    // get meta length
-    var metaLength = parseInt(dataElement.value[0], 10);
+    let bitsAllocated;
+    let pixelRepresentation;
+    if (typeof pixelTags !== 'undefined') {
+      bitsAllocated = pixelTags.bitsAllocated;
+      pixelRepresentation = pixelTags.pixelRepresentation;
+    }
 
-    // meta elements
-    var metaEnd = offset + metaLength;
-    while (offset < metaEnd) {
-      // get the data element
-      dataElement = this.readDataElement(metaReader, offset, false);
+    // data
+    let data;
+    const vrType = vrTypes[vr];
+    if (isAnyPixelDataTag(tag)) {
+      if (element.undefinedLength) {
+        // implicit pixel data sequence
+        data = [];
+        for (let j = 0; j < element.items.length; ++j) {
+          data.push(this.#interpretElement(
+            element.items[j], reader, pixelTags));
+        }
+        // remove non parsed items
+        delete element.items;
+      } else {
+        // check bits allocated and VR
+        // https://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/sect_A.2.html
+        if (bitsAllocated > 8 && vr === 'OB') {
+          logger.warn(
+            'Reading DICOM pixel data with bitsAllocated>8 and OB VR' +
+            ', treating as OW'
+          );
+          element.vr = 'OW';
+        }
+        // read: float pixel data have dedicated tags, PixelData
+        // is integer data
+        data = [];
+        const tagKey = tag.getKey();
+        if (tagKey === '7FE00008') {
+          // FloatPixelData
+          data.push(reader.readFloat32Array(offset, vl));
+        } else if (tagKey === '7FE00009') {
+          // DoubleFloatPixelData
+          data.push(reader.readFloat64Array(offset, vl));
+        } else if (bitsAllocated === 1) {
+          data.push(reader.readBinaryArray(
+            offset, vl, pixelTags.imageBufferSize));
+        } else if (bitsAllocated === 8) {
+          if (pixelRepresentation === 0) {
+            data.push(reader.readUint8Array(offset, vl));
+          } else {
+            data.push(reader.readInt8Array(offset, vl));
+          }
+        } else if (bitsAllocated === 16) {
+          if (pixelRepresentation === 0) {
+            data.push(reader.readUint16Array(offset, vl));
+          } else {
+            data.push(reader.readInt16Array(offset, vl));
+          }
+        } else if (bitsAllocated === 32) {
+          if (pixelRepresentation === 0) {
+            data.push(reader.readUint32Array(offset, vl));
+          } else {
+            data.push(reader.readInt32Array(offset, vl));
+          }
+        } else {
+          throw new Error(`Unsupported bits allocated: ${bitsAllocated}`);
+        }
+      }
+    } else if (typeof vrType !== 'undefined') {
+      if (vrType === 'Uint8') {
+        data = reader.readUint8Array(offset, vl);
+      } else if (vrType === 'Uint16') {
+        data = reader.readUint16Array(offset, vl);
+        // keep as binary for 'O*' VR
+        if (vr[0] !== 'O') {
+          data = Array.from(data);
+        }
+      } else if (vrType === 'Uint32') {
+        data = reader.readUint32Array(offset, vl);
+        // keep as binary for 'O*' VR
+        if (vr[0] !== 'O') {
+          data = Array.from(data);
+        }
+      } else if (vrType === 'Uint64') {
+        data = reader.readUint64Array(offset, vl);
+      } else if (vrType === 'Int16') {
+        data = Array.from(reader.readInt16Array(offset, vl));
+      } else if (vrType === 'Int32') {
+        data = Array.from(reader.readInt32Array(offset, vl));
+      } else if (vrType === 'Int64') {
+        data = reader.readInt64Array(offset, vl);
+      } else if (vrType === 'Float32') {
+        data = Array.from(reader.readFloat32Array(offset, vl));
+      } else if (vrType === 'Float64') {
+        data = Array.from(reader.readFloat64Array(offset, vl));
+      } else if (vrType === 'string') {
+        const stream = reader.readUint8Array(offset, vl);
+        if (isCharSetStringVR(vr)) {
+          data = this.#decodeSpecialString(stream);
+        } else {
+          data = this.#decodeString(stream);
+        }
+        data = cleanString(data).split('\\');
+      } else {
+        throw new Error(`Unknown VR type: ${vrType}`);
+      }
+    } else if (vr === 'xx') {
+      // US or OW
+      data = Array.from(reader.readUint16Array(offset, vl));
+    } else if (vr === 'ox') {
+      // OB or OW
+      if (bitsAllocated === 8) {
+        if (pixelRepresentation === 0) {
+          data = Array.from(reader.readUint8Array(offset, vl));
+        } else {
+          data = Array.from(reader.readInt8Array(offset, vl));
+        }
+      } else if (pixelRepresentation === 0) {
+        data = Array.from(reader.readUint16Array(offset, vl));
+      } else {
+        data = Array.from(reader.readInt16Array(offset, vl));
+      }
+    } else if (vr === 'xs') {
+      // (US or SS) or (US or SS or OW)
+      if (pixelRepresentation === 0) {
+        data = Array.from(reader.readUint16Array(offset, vl));
+      } else {
+        data = Array.from(reader.readInt16Array(offset, vl));
+      }
+    } else if (vr === 'AT') {
+      // attribute
+      const raw = reader.readUint16Array(offset, vl);
+      data = [];
+      for (let i = 0, leni = raw.length; i < leni; i += 2) {
+        const stri = raw[i].toString(16);
+        const stri1 = raw[i + 1].toString(16);
+        let str = '(';
+        str += '0000'.substring(0, 4 - stri.length) + stri.toUpperCase();
+        str += ',';
+        str += '0000'.substring(0, 4 - stri1.length) + stri1.toUpperCase();
+        str += ')';
+        data.push(str);
+      }
+    } else if (vr === 'SQ') {
+      // sequence
+      data = [];
+      for (let k = 0; k < element.items.length; ++k) {
+        const item = element.items[k];
+        const itemData = {};
+        const keys = Object.keys(item);
+        let sqBitsAllocated = bitsAllocated;
+        let sqPixelRepresentation = pixelRepresentation;
+        for (let l = 0; l < keys.length; ++l) {
+          // check if local bitsAllocated
+          // (inside item loop to get interpreted value)
+          let dataElement = item[TagKeys.BitsAllocated];
+          if (typeof dataElement !== 'undefined' &&
+            typeof dataElement.value !== 'undefined') {
+            sqBitsAllocated = dataElement.value[0];
+          }
+          // check if local pixelRepresentation
+          // (inside item loop to get interpreted value)
+          dataElement = item[TagKeys.PixelRepresentation];
+          if (typeof dataElement !== 'undefined' &&
+            typeof dataElement.value !== 'undefined') {
+            sqPixelRepresentation = dataElement.value[0];
+          }
+          const sqPixelTags = {
+            bitsAllocated: sqBitsAllocated,
+            pixelRepresentation: sqPixelRepresentation
+          };
+          const subElement = item[keys[l]];
+          subElement.value = this.#interpretElement(
+            subElement, reader, sqPixelTags);
+          delete subElement.tag;
+          delete subElement.vl;
+          delete subElement.startOffset;
+          delete subElement.endOffset;
+          itemData[keys[l]] = subElement;
+        }
+        data.push(itemData);
+      }
+      // remove non parsed elements
+      delete element.items;
+    } else if (vr === 'NONE') {
+      // no VR -> no data
+      data = [];
+    } else {
+      logger.warn(`Unknown VR: ${ vr
+      } (for tag ${element.tag.getKey()})`);
+      // empty data...
+      data = [];
+    }
+
+    return data;
+  }
+
+  /**
+   * Interpret the data of a list of elements.
+   *
+   * @param {DataElements} elements A list of data elements.
+   * @param {DataReader} reader The raw data reader.
+   * @param {object} [pixelTags] Pixel data related tags.
+   */
+  #interpret(elements, reader, pixelTags) {
+
+    const keys = Object.keys(elements);
+    for (let i = 0; i < keys.length; ++i) {
+      const element = elements[keys[i]];
+      if (typeof element.value === 'undefined') {
+        element.value = this.#interpretElement(
+          element, reader, pixelTags);
+      }
+      // delete interpretation specific properties
+      delete element.tag;
+      delete element.vl;
+      delete element.startOffset;
+      delete element.endOffset;
+    }
+  }
+
+  /**
+   * Parse a DICOM buffer.
+   * Fills in the member object 'dataElements'.
+   *
+   * @param {ArrayBuffer} buffer The input array buffer.
+   * @param {Tag} [untilTag] Optional tag to stop the parsing once reached.
+   */
+  parse(buffer, untilTag) {
+    let offset;
+    let syntax;
+    let dataElement;
+    // default readers
+    const metaReader = new DataReader(buffer);
+    let dataReader = new DataReader(buffer);
+
+    // 128 -> 132: magic word
+    offset = 128;
+    const magicword = this.#decodeString(metaReader.readUint8Array(offset, 4));
+    offset += 4 * Uint8Array.BYTES_PER_ELEMENT;
+    if (magicword === 'DICM') {
+      // 0002, 0000: FileMetaInformationGroupLength (vr='UL')
+      dataElement = this.#readDataElement(metaReader, offset, false);
+      dataElement.value = this.#interpretElement(dataElement, metaReader);
+      // increment offset
       offset = dataElement.endOffset;
       // store the data element
-      this.dicomElements[dataElement.tag.name] = dataElement;
-    }
-  } else {
-    // no metadata: attempt to detect transfer syntax
-    // see https://github.com/ivmartel/dwv/issues/188
-    //   (Allow to load DICOM with no DICM preamble) for more details
-    var oEightGroupBigEndian = '0x0800';
-    var oEightGroupLittleEndian = '0x0008';
-    // read first element
-    dataElement = this.readDataElement(dataReader, 0, implicit);
-    // check that group is 0x0008
-    if ((dataElement.tag.group !== oEightGroupBigEndian) &&
-            (dataElement.tag.group !== oEightGroupLittleEndian)) {
-      throw new Error(
-        'Not a valid DICOM file (no magic DICM word found' +
-          'and first element not in 0x0008 group)'
-      );
-    }
-    // reasonable assumption: 2 uppercase characters => explicit vr
-    var vr0 = dataElement.vr.charCodeAt(0);
-    var vr1 = dataElement.vr.charCodeAt(1);
-    implicit = (vr0 >= 65 && vr0 <= 90 && vr1 >= 65 && vr1 <= 90)
-      ? false : true;
-    // guess transfer syntax
-    if (dataElement.tag.group === oEightGroupLittleEndian) {
-      if (implicit) {
-        // ImplicitVRLittleEndian
-        syntax = '1.2.840.10008.1.2';
-      } else {
-        // ExplicitVRLittleEndian
-        syntax = '1.2.840.10008.1.2.1';
+      this.#dataElements[dataElement.tag.getKey()] = dataElement;
+      // get meta length
+      const metaLength = dataElement.value[0];
+
+      // meta elements
+      const metaEnd = offset + metaLength;
+      while (offset < metaEnd) {
+        // get the data element
+        dataElement = this.#readDataElement(metaReader, offset, false);
+        offset = dataElement.endOffset;
+        // store the data element
+        this.#dataElements[dataElement.tag.getKey()] = dataElement;
       }
+
+      // check the TransferSyntaxUID (has to be there!)
+      dataElement = this.#dataElements[TagKeys.TransferSyntax];
+      if (typeof dataElement === 'undefined') {
+        throw new Error('Not a valid DICOM file (no TransferSyntaxUID found)');
+      }
+      dataElement.value = this.#interpretElement(dataElement, metaReader);
+      syntax = dataElement.value[0];
+
     } else {
-      if (implicit) {
-        // ImplicitVRBigEndian: impossible
-        throw new Error(
-          'Not a valid DICOM file (no magic DICM word found' +
-          'and implicit VR big endian detected)'
-        );
+      logger.warn(`Invalid DICM prefix (${ magicword
+      }), trying to guess tansfer syntax.`);
+      // read first element
+      dataElement = this.#readDataElement(dataReader, 0, false);
+      // guess transfer syntax
+      const tsElement = guessTransferSyntax(dataElement);
+      // store
+      this.#dataElements[tsElement.tag.getKey()] = tsElement;
+      syntax = tsElement.value[0];
+      // reset offset
+      offset = 0;
+    }
+
+    // check transfer syntax support
+    if (!isReadSupportedTransferSyntax(syntax)) {
+      throw new Error(`Unsupported DICOM transfer syntax: '${ syntax
+      }' (${getTransferSyntaxName(syntax)})`);
+    }
+
+    // set implicit flag
+    let implicit = false;
+    if (isImplicitTransferSyntax(syntax)) {
+      implicit = true;
+    }
+
+    // Big Endian
+    if (isBigEndianTransferSyntax(syntax)) {
+      dataReader = new DataReader(buffer, false);
+    }
+
+    let reachedUntilTag = false;
+
+    // DICOM data elements
+    while (offset < buffer.byteLength) {
+      // get the data element
+      dataElement = this.#readDataElement(
+        dataReader, offset, implicit, untilTag);
+      // until tag
+      if (typeof untilTag !== 'undefined' &&
+        dataElement.tag.equals(untilTag)) {
+        reachedUntilTag = true;
+        break;
+      }
+      // increment offset
+      offset = dataElement.endOffset;
+      // store the data element
+      const key = dataElement.tag.getKey();
+      if (typeof this.#dataElements[key] === 'undefined') {
+        this.#dataElements[key] = dataElement;
       } else {
-        // ExplicitVRBigEndian
-        syntax = '1.2.840.10008.1.2.2';
+        logger.warn(`Not saving duplicate tag: ${key}`);
       }
     }
-    // set transfer syntax data element
-    dataElement.tag.group = '0x0002';
-    dataElement.tag.element = '0x0010';
-    dataElement.tag.name = 'x00020010';
-    dataElement.tag.endOffset = 4;
-    dataElement.vr = 'UI';
-    dataElement.value = [syntax + ' ']; // even length
-    dataElement.vl = dataElement.value[0].length;
-    dataElement.endOffset = dataElement.startOffset + dataElement.vl;
-    // store it
-    this.dicomElements[dataElement.tag.name] = dataElement;
 
-    // reset offset
-    offset = 0;
-  }
+    // safety checks...
+    if (isNaN(offset)) {
+      throw new Error('Problem while parsing, bad offset');
+    }
+    if (!reachedUntilTag && buffer.byteLength !== offset) {
+      logger.warn(`Did not reach the end of the buffer: ${
+        offset } != ${buffer.byteLength}`);
+    }
 
-  // check the TransferSyntaxUID (has to be there!)
-  if (typeof this.dicomElements.x00020010 === 'undefined') {
-    throw new Error('Not a valid DICOM file (no TransferSyntaxUID found)');
-  }
-  syntax = dwv.dicom.cleanString(this.dicomElements.x00020010.value[0]);
+    //-------------------------------------------------
+    // values needed for data interpretation
 
-  // check support
-  if (!dwv.dicom.isReadSupportedTransferSyntax(syntax)) {
-    throw new Error('Unsupported DICOM transfer syntax: \'' + syntax +
-            '\' (' + dwv.dicom.getTransferSyntaxName(syntax) + ')');
-  }
+    // pixel specific
+    let pixelTags;
+    if (hasAnyPixelDataElement(this.#dataElements)) {
+      // PixelRepresentation 0->unsigned, 1->signed
+      let pixelRepresentation;
+      // only present for pixel data (not float)
+      const pixelData = this.#dataElements[TagKeys.PixelData];
+      if (typeof pixelData !== 'undefined') {
+        dataElement = this.#dataElements[TagKeys.PixelRepresentation];
+        if (typeof dataElement !== 'undefined') {
+          dataElement.value = this.#interpretElement(dataElement, dataReader);
+          pixelRepresentation = dataElement.value[0];
+        } else {
+          logger.warn(
+            'Reading DICOM pixel data with default pixelRepresentation.');
+          pixelRepresentation = 0;
+        }
+      }
 
-  // Implicit VR
-  if (dwv.dicom.isImplicitTransferSyntax(syntax)) {
-    implicit = true;
-  }
+      // BitsAllocated
+      let bitsAllocated = 16;
+      dataElement = this.#dataElements[TagKeys.BitsAllocated];
+      if (typeof dataElement !== 'undefined') {
+        dataElement.value = this.#interpretElement(dataElement, dataReader);
+        bitsAllocated = dataElement.value[0];
+      } else {
+        logger.warn('Reading DICOM pixel data with default bitsAllocated.');
+      }
 
-  // Big Endian
-  if (dwv.dicom.isBigEndianTransferSyntax(syntax)) {
-    dataReader = new dwv.dicom.DataReader(buffer, false);
-  }
+      // NumberOfFrames
+      let numberOfFrames = 1;
+      dataElement = this.#dataElements[TagKeys.NumberOfFrames];
+      if (typeof dataElement !== 'undefined') {
+        dataElement.value = this.#interpretElement(dataElement, dataReader);
+        numberOfFrames = parseInt(dataElement.value[0], 10);
+      }
 
-  // default character set
-  if (typeof this.getDefaultCharacterSet() !== 'undefined') {
-    dataReader.setUtfLabel(this.getDefaultCharacterSet());
-  }
+      pixelTags = {
+        pixelRepresentation,
+        bitsAllocated,
+        numberOfFrames,
+        imageBufferSize: undefined
+      };
 
-  // DICOM data elements
-  while (offset < buffer.byteLength) {
-    // get the data element
-    dataElement = this.readDataElement(dataReader, offset, implicit);
-    // check character set
-    if (dataElement.tag.name === 'x00080005') {
-      var charSetTerm;
+      // image buffer size
+      let rows;
+      dataElement = this.#dataElements[TagKeys.Rows];
+      if (typeof dataElement !== 'undefined') {
+        dataElement.value = this.#interpretElement(dataElement, dataReader);
+        rows = parseInt(dataElement.value[0], 10);
+      }
+      let cols;
+      dataElement = this.#dataElements[TagKeys.Columns];
+      if (typeof dataElement !== 'undefined') {
+        dataElement.value = this.#interpretElement(dataElement, dataReader);
+        cols = parseInt(dataElement.value[0], 10);
+      }
+      if (typeof rows !== 'undefined' &&
+        typeof cols !== 'undefined') {
+        pixelTags.imageBufferSize = rows * cols * numberOfFrames;
+      }
+    }
+
+    // default character set
+    if (typeof this.#defaultCharacterSet !== 'undefined') {
+      this.setDecoderCharacterSet(this.#defaultCharacterSet);
+    }
+
+    // SpecificCharacterSet
+    dataElement = this.#dataElements[TagKeys.SpecificCharacterSet];
+    if (typeof dataElement !== 'undefined') {
+      dataElement.value = this.#interpretElement(dataElement, dataReader);
+      let charSetTerm;
       if (dataElement.value.length === 1) {
-        charSetTerm = dwv.dicom.cleanString(dataElement.value[0]);
+        charSetTerm = dataElement.value[0];
       } else {
-        charSetTerm = dwv.dicom.cleanString(dataElement.value[1]);
-        dwv.logger.warn('Unsupported character set with code extensions: \'' +
-          charSetTerm + '\'.');
+        charSetTerm = dataElement.value[1];
+        if (charSetTerm !== 'ISO 2022 IR 149') {
+          logger.warn(`Unsupported character set with code extensions: '${
+            charSetTerm }'.`);
+        }
       }
-      dataReader.setUtfLabel(dwv.dicom.getUtfLabel(charSetTerm));
-    }
-    // increment offset
-    offset = dataElement.endOffset;
-    // store the data element
-    if (typeof this.dicomElements[dataElement.tag.name] === 'undefined') {
-      this.dicomElements[dataElement.tag.name] = dataElement;
-    } else {
-      dwv.logger.warn('Not saving duplicate tag: ' + dataElement.tag.name);
-    }
-  }
-
-  // safety check...
-  if (buffer.byteLength !== offset) {
-    dwv.logger.warn('Did not reach the end of the buffer: ' +
-      offset + ' != ' + buffer.byteLength);
-  }
-
-  // pixel buffer
-  if (typeof this.dicomElements.x7FE00010 !== 'undefined') {
-
-    var numberOfFrames = 1;
-    if (typeof this.dicomElements.x00280008 !== 'undefined') {
-      numberOfFrames = dwv.dicom.cleanString(
-        this.dicomElements.x00280008.value[0]);
+      this.setDecoderCharacterSet(getUtfLabel(charSetTerm));
+      this.#removeEscapeSequences = charSetTerm === 'ISO 2022 IR 149';
     }
 
-    if (this.dicomElements.x7FE00010.vl !== 'u/l') {
-      // compressed should be encapsulated...
-      if (dwv.dicom.isJpeg2000TransferSyntax(syntax) ||
-                dwv.dicom.isJpegBaselineTransferSyntax(syntax) ||
-                dwv.dicom.isJpegLosslessTransferSyntax(syntax)) {
-        dwv.logger.warn('Compressed but no items...');
-      }
+    // interpret the dicom elements
+    this.#interpret(this.#dataElements, dataReader, pixelTags);
 
-      // calculate the slice size
-      var pixData = this.dicomElements.x7FE00010.value;
-      if (pixData && typeof pixData !== 'undefined' &&
-                pixData.length !== 0) {
-        if (typeof this.dicomElements.x00280010 === 'undefined') {
-          throw new Error('Missing image number of rows.');
-        }
-        if (typeof this.dicomElements.x00280011 === 'undefined') {
-          throw new Error('Missing image number of columns.');
-        }
-        if (typeof this.dicomElements.x00280002 === 'undefined') {
-          throw new Error('Missing image samples per pixel.');
-        }
-        var columns = this.dicomElements.x00280011.value[0];
-        var rows = this.dicomElements.x00280010.value[0];
-        var samplesPerPixel = this.dicomElements.x00280002.value[0];
-        var sliceSize = columns * rows * samplesPerPixel;
-        // slice data in an array of frames
-        var newPixData = [];
-        var frameOffset = 0;
-        for (var g = 0; g < numberOfFrames; ++g) {
-          newPixData[g] = pixData.slice(frameOffset, frameOffset + sliceSize);
-          frameOffset += sliceSize;
-        }
-        // store as pixel data
-        this.dicomElements.x7FE00010.value = newPixData;
-      } else {
-        dwv.logger.info('Empty pixel data.');
-      }
-    } else {
-      // handle fragmented pixel buffer
-      // Reference: http://dicom.nema.org/dicom/2013/output/chtml/part05/sect_8.2.html
-      // (third note, "Depending on the transfer syntax...")
-      var pixItems = this.dicomElements.x7FE00010.value;
-      if (pixItems.length > 1 && pixItems.length > numberOfFrames) {
-
-        // concatenate pixel data items
-        // concat does not work on typed arrays
-        //this.pixelBuffer = this.pixelBuffer.concat( dataElement.data );
-        // manual concat...
-        var nItemPerFrame = pixItems.length / numberOfFrames;
-        var newPixItems = [];
-        var index = 0;
-        for (var f = 0; f < numberOfFrames; ++f) {
-          index = f * nItemPerFrame;
-          // calculate the size of a frame
-          var size = 0;
-          for (var i = 0; i < nItemPerFrame; ++i) {
-            size += pixItems[index + i].length;
+    // handle fragmented pixel buffer
+    // Reference: http://dicom.nema.org/medical/dicom/2024a/output/chtml/part05/sect_8.2.html
+    // (third note, "Depending on the transfer syntax...")
+    dataElement = this.#dataElements[TagKeys.PixelData];
+    if (typeof dataElement !== 'undefined') {
+      if (dataElement.undefinedLength) {
+        const numberOfFrames = pixelTags.numberOfFrames;
+        const pixItems = dataElement.value;
+        if (pixItems.length > 1 && pixItems.length > numberOfFrames) {
+          // concatenate pixel data items
+          // concat does not work on typed arrays
+          //this.pixelBuffer = this.pixelBuffer.concat( dataElement.data );
+          // manual concat...
+          const nItemPerFrame = pixItems.length / numberOfFrames;
+          const newPixItems = [];
+          let index;
+          for (let f = 0; f < numberOfFrames; ++f) {
+            index = f * nItemPerFrame;
+            // calculate the size of a frame
+            let size = 0;
+            for (let i = 0; i < nItemPerFrame; ++i) {
+              size += pixItems[index + i].length;
+            }
+            // create new buffer
+            const newBuffer = new pixItems[0].constructor(size);
+            // fill new buffer
+            let fragOffset = 0;
+            for (let j = 0; j < nItemPerFrame; ++j) {
+              newBuffer.set(pixItems[index + j], fragOffset);
+              fragOffset += pixItems[index + j].length;
+            }
+            newPixItems[f] = newBuffer;
           }
-          // create new buffer
-          var newBuffer = new pixItems[0].constructor(size);
-          // fill new buffer
-          var fragOffset = 0;
-          for (var j = 0; j < nItemPerFrame; ++j) {
-            newBuffer.set(pixItems[index + j], fragOffset);
-            fragOffset += pixItems[index + j].length;
-          }
-          newPixItems[f] = newBuffer;
+          // store as pixel data
+          dataElement.value = newPixItems;
         }
-        // store as pixel data
-        this.dicomElements.x7FE00010.value = newPixItems;
       }
     }
   }
-};
+
+} // class DicomParser

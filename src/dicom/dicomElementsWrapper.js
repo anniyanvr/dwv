@@ -1,138 +1,94 @@
-// namespaces
-var dwv = dwv || {};
-dwv.dicom = dwv.dicom || {};
+import {
+  getTransferSyntaxName,
+  isImplicitTransferSyntax,
+  getDataElementPrefixByteSize
+} from './dicomParser.js';
+import {
+  getDateObj,
+  getTimeObj,
+  getDate
+} from './dicomDate.js';
+import {
+  isAnyPixelDataTag,
+  isItemTag,
+  getItemTag,
+  getItemDelimitationItemTag,
+  getSequenceDelimitationItemTag,
+  getTagFromKey
+} from './dicomTag.js';
+import {isNativeLittleEndian} from './dataReader.js';
+import {getDicomTagInfo} from './dicomTagInfo.js';
+import {vrTypes} from './dictionary.js';
+import {DataElement} from './dataElement.js';
 
 /**
- * DicomElements wrapper.
- *
- * @class
- * @param {Array} dicomElements The elements to wrap.
+ * @import {Tag} from './dicomTag.js';
  */
-dwv.dicom.DicomElementsWrapper = function (dicomElements) {
 
-  /**
-   * Get a DICOM Element value from a group/element key.
-   *
-   * @param {string} groupElementKey The key to retrieve.
-   * @returns {object} The DICOM element.
-   */
-  this.getDEFromKey = function (groupElementKey) {
-    return dicomElements[groupElementKey];
-  };
-
-  /**
-   * Get a DICOM Element value from a group/element key.
-   *
-   * @param {string} groupElementKey The key to retrieve.
-   * @param {boolean} asArray Get the value as an Array.
-   * @returns {object} The DICOM element value.
-   */
-  this.getFromKey = function (groupElementKey, asArray) {
-    // default
-    if (typeof asArray === 'undefined') {
-      asArray = false;
+/**
+ * Dump the DICOM tags to a string in the same way as the
+ * DCMTK `dcmdump` command (https://support.dcmtk.org/docs-dcmrt/dcmdump.html).
+ *
+ * @param {Record<string, DataElement>} dicomElements The dicom elements.
+ * @returns {string} The dumped file.
+ */
+export function dcmdump(dicomElements) {
+  // sort keys: integer like keys (for ex '60000010') come first otherwise
+  const keys = Object.keys(dicomElements).sort();
+  let result = '\n';
+  result += '# Dicom-File-Format\n';
+  result += '\n';
+  result += '# Dicom-Meta-Information-Header\n';
+  result += '# Used TransferSyntax: ';
+  if (isNativeLittleEndian()) {
+    result += 'Little Endian Explicit\n';
+  } else {
+    result += 'NOT Little Endian Explicit\n';
+  }
+  const syntax = dicomElements['00020010'].value[0];
+  let dicomElement;
+  let tag;
+  let checkHeader = true;
+  // the meta information header is always explicit
+  let isImplicit = false;
+  for (let i = 0, leni = keys.length; i < leni; ++i) {
+    dicomElement = dicomElements[keys[i]];
+    tag = getTagFromKey(keys[i]);
+    if (checkHeader && tag.getGroup() !== '0002') {
+      result += '\n';
+      result += '# Dicom-Data-Set\n';
+      result += '# Used TransferSyntax: ';
+      result += getTransferSyntaxName(syntax);
+      result += '\n';
+      checkHeader = false;
+      isImplicit = isImplicitTransferSyntax(syntax);
     }
-    var value = null;
-    var dElement = dicomElements[groupElementKey];
-    if (typeof dElement !== 'undefined') {
-      // raw value if only one
-      if (dElement.value.length === 1 && asArray === false) {
-        value = dElement.value[0];
-      } else {
-        value = dElement.value;
-      }
-    }
-    return value;
-  };
+    result += `${getElementAsString(tag, dicomElement, '', isImplicit)}\n`;
+  }
+  return result;
+}
 
-  /**
-   * Dump the DICOM tags to an array.
-   *
-   * @returns {object} The DICOM tags as an object.
-   */
-  this.dumpToObject = function () {
-    var keys = Object.keys(dicomElements);
-    var dict = dwv.dicom.dictionary;
-    var obj = {};
-    var dicomElement = null;
-    var dictElement = null;
-    var row = null;
-    for (var i = 0, leni = keys.length; i < leni; ++i) {
-      dicomElement = dicomElements[keys[i]];
-      row = {};
-      // dictionnary entry (to get name)
-      dictElement = null;
-      if (typeof dict[dicomElement.tag.group] !== 'undefined' &&
-          typeof dict[dicomElement.tag.group][dicomElement.tag.element] !==
-          'undefined') {
-        dictElement = dict[dicomElement.tag.group][dicomElement.tag.element];
-      }
-      // name
-      var name = 'Unknown Tag & Data';
-      if (dictElement !== null) {
-        name = dictElement[2];
-      }
-      // value
-      row.value = this.getElementValueAsString(dicomElement);
-      // others
-      row.group = dicomElement.tag.group;
-      row.element = dicomElement.tag.element;
-      row.vr = dicomElement.vr;
-      row.vl = dicomElement.vl;
-
-      obj[name] = row;
-    }
-    return obj;
-  };
-
-  /**
-   * Dump the DICOM tags to a string.
-   *
-   * @returns {string} The dumped file.
-   */
-  this.dump = function () {
-    var keys = Object.keys(dicomElements);
-    var result = '\n';
-    result += '# Dicom-File-Format\n';
-    result += '\n';
-    result += '# Dicom-Meta-Information-Header\n';
-    result += '# Used TransferSyntax: ';
-    if (dwv.dicom.isNativeLittleEndian()) {
-      result += 'Little Endian Explicit\n';
-    } else {
-      result += 'NOT Little Endian Explicit\n';
-    }
-    var dicomElement = null;
-    var checkHeader = true;
-    for (var i = 0, leni = keys.length; i < leni; ++i) {
-      dicomElement = dicomElements[keys[i]];
-      if (checkHeader && dicomElement.tag.group !== '0x0002') {
-        result += '\n';
-        result += '# Dicom-Data-Set\n';
-        result += '# Used TransferSyntax: ';
-        var syntax = dwv.dicom.cleanString(dicomElements.x00020010.value[0]);
-        result += dwv.dicom.getTransferSyntaxName(syntax);
-        result += '\n';
-        checkHeader = false;
-      }
-      result += this.getElementAsString(dicomElement) + '\n';
-    }
-    return result;
-  };
-
-};
+/**
+ * Is the input VR a binary VR: 'O'ther or Unknown (UN).
+ *
+ * @param {string} vr The value representation.
+ * @returns {boolean} True if binary.
+ */
+function isBinaryVR(vr) {
+  return vr === 'UN' || (vr.length !== 0 && vr[0].toUpperCase() === 'O');
+}
 
 /**
  * Get a data element value as a string.
  *
- * @param {object} dicomElement The DICOM element.
- * @param {boolean} pretty When set to true, returns a 'pretified' content.
+ * @param {Tag} tag The DICOM tag.
+ * @param {DataElement} dicomElement The DICOM element.
+ * @param {boolean} [pretty] When set to true, returns a 'pretified' content.
  * @returns {string} A string representation of the DICOM element.
  */
-dwv.dicom.DicomElementsWrapper.prototype.getElementValueAsString = function (
-  dicomElement, pretty) {
-  var str = '';
-  var strLenLimit = 65;
+function getElementValueAsString(tag, dicomElement, pretty) {
+  let str = '';
+  const strLenLimit = 65;
 
   // dafault to pretty output
   if (typeof pretty === 'undefined') {
@@ -144,77 +100,60 @@ dwv.dicom.DicomElementsWrapper.prototype.getElementValueAsString = function (
   }
 
   // Polyfill for Number.isInteger.
-  var isInteger = Number.isInteger || function (value) {
+  const isInteger = Number.isInteger || function (value) {
     return typeof value === 'number' &&
-        isFinite(value) &&
-        Math.floor(value) === value;
+      isFinite(value) &&
+      Math.floor(value) === value;
   };
 
   // TODO Support sequences.
 
   if (dicomElement.vr !== 'SQ' &&
-        dicomElement.value.length === 1 && dicomElement.value[0] === '') {
+    dicomElement.value.length === 1 && dicomElement.value[0] === '') {
     str += '(no value available)';
-  } else if (dicomElement.tag.group === '0x7FE0' &&
-        dicomElement.tag.element === '0x0010' &&
-        dicomElement.vl === 'u/l') {
+  } else if (isAnyPixelDataTag(tag) &&
+    dicomElement.undefinedLength) {
     str = '(PixelSequence)';
   } else if (dicomElement.vr === 'DA' && pretty) {
-    var daValue = dicomElement.value[0];
-    // Two possible date formats:
-    // - standard 'YYYYMMDD'
-    // - non-standard 'YYYY.MM.DD' (previous ACR-NEMA)
-    var monthBeginIndex = 4;
-    var dayBeginIndex = 6;
-    if (daValue.length !== 8) {
-      monthBeginIndex = 5;
-      dayBeginIndex = 8;
-    }
-    var da = new Date(
-      parseInt(daValue.substr(0, 4), 10),
-      parseInt(daValue.substr(monthBeginIndex, 2), 10) - 1, // 0-11 range
-      parseInt(daValue.substr(dayBeginIndex, 2), 10));
+    const da = getDate(getDateObj(dicomElement));
     str = da.toLocaleDateString();
   } else if (dicomElement.vr === 'TM' && pretty) {
-    var tmValue = dicomElement.value[0];
-    var tmHour = tmValue.substr(0, 2);
-    var tmMinute = tmValue.length >= 4 ? tmValue.substr(2, 2) : '00';
-    var tmSeconds = tmValue.length >= 6 ? tmValue.substr(4, 2) : '00';
-    str = tmHour + ':' + tmMinute + ':' + tmSeconds;
+    const tmObj = getTimeObj(dicomElement);
+    str = `${tmObj.hours}:${tmObj.minutes}:${tmObj.seconds}`;
   } else {
-    var isOtherVR = (dicomElement.vr[0].toUpperCase() === 'O');
-    var isFloatNumberVR = (dicomElement.vr === 'FL' ||
-            dicomElement.vr === 'FD' ||
-            dicomElement.vr === 'DS');
-    var valueStr = '';
-    for (var k = 0, lenk = dicomElement.value.length; k < lenk; ++k) {
-      valueStr = '';
+    const isOtherVR = isBinaryVR(dicomElement.vr);
+    const isFloatNumberVR = (dicomElement.vr === 'FL' ||
+      dicomElement.vr === 'FD' ||
+      dicomElement.vr === 'DS');
+    // pixel data value is a list of frames: display the first one
+    /** @type {ArrayLike<any>} */
+    let values = dicomElement.value;
+    const first = dicomElement.value[0];
+    if (Array.isArray(values) && ArrayBuffer.isView(first)) {
+      values = dicomElement.value[0];
+    }
+    for (let k = 0, lenk = values.length; k < lenk; ++k) {
+      let valueStr = '';
       if (k !== 0) {
         valueStr += '\\';
       }
       if (isFloatNumberVR) {
-        var val = dicomElement.value[k];
-        if (typeof val === 'string') {
-          val = dwv.dicom.cleanString(val);
-        }
-        var num = Number(val);
+        const num = Number(values[k]);
         if (!isInteger(num) && pretty) {
           valueStr += num.toPrecision(4);
         } else {
           valueStr += num.toString();
         }
       } else if (isOtherVR) {
-        var tmp = dicomElement.value[k].toString(16);
-        if (dicomElement.vr === 'OB') {
-          tmp = '00'.substr(0, 2 - tmp.length) + tmp;
+        let tmp = values[k].toString(16);
+        if (dicomElement.vr === 'OB' || dicomElement.vr === 'UN') {
+          tmp = '00'.substring(0, 2 - tmp.length) + tmp;
         } else {
-          tmp = '0000'.substr(0, 4 - tmp.length) + tmp;
+          tmp = '0000'.substring(0, 4 - tmp.length) + tmp;
         }
         valueStr += tmp;
-      } else if (typeof dicomElement.value[k] === 'string') {
-        valueStr += dwv.dicom.cleanString(dicomElement.value[k]);
       } else {
-        valueStr += dicomElement.value[k];
+        valueStr += values[k];
       }
       // check length
       if (str.length + valueStr.length <= strLenLimit) {
@@ -226,313 +165,233 @@ dwv.dicom.DicomElementsWrapper.prototype.getElementValueAsString = function (
     }
   }
   return str;
-};
+}
 
 /**
- * Get a data element value as a string.
- *
- * @param {string} groupElementKey The key to retrieve.
- * @returns {string} The element as a string.
+ * Text encoder used to get string byte lengths.
  */
-dwv.dicom.DicomElementsWrapper.prototype.getElementValueAsStringFromKey =
-function (groupElementKey) {
-  return this.getElementValueAsString(this.getDEFromKey(groupElementKey));
-};
+const textEncoder = new TextEncoder();
+
+/**
+ * Get the value length (in bytes) of a data element, as it would be
+ * written. The parser does not keep the read value length, so it is
+ * computed from the parsed value.
+ * String lengths are computed using UTF-8, they can differ from the
+ * written ones for non ASCII characters with other character sets.
+ *
+ * @param {Tag} tag The DICOM tag.
+ * @param {DataElement} dicomElement The DICOM element.
+ * @param {boolean} isImplicit Does the data use implicit VR?
+ * @returns {number} The value length.
+ */
+function getValueLength(tag, dicomElement, isImplicit) {
+  const value = dicomElement.value;
+  if (typeof value === 'undefined' || value === null) {
+    return 0;
+  }
+  const delimitationLength = getDataElementPrefixByteSize('NONE', isImplicit);
+  let length = 0;
+  if (dicomElement.vr === 'SQ') {
+    for (const item of value) {
+      length += getItemLength(item, isImplicit);
+    }
+    if (dicomElement.undefinedLength) {
+      length += delimitationLength;
+    }
+  } else if (isAnyPixelDataTag(tag) && dicomElement.undefinedLength) {
+    // pixel sequence: fragments and sequence delimitation item
+    for (const fragment of value) {
+      length += delimitationLength + fragment.byteLength;
+    }
+    length += delimitationLength;
+  } else if (dicomElement.vr === 'AT') {
+    length = 4 * value.length;
+  } else if (vrTypes[dicomElement.vr] === 'string') {
+    length = textEncoder.encode(value.join('\\')).length;
+  } else if (ArrayBuffer.isView(value)) {
+    length = value.byteLength;
+  } else if (Array.isArray(value) && ArrayBuffer.isView(value[0])) {
+    // pixel data frames
+    for (const frame of value) {
+      length += frame.byteLength;
+    }
+  } else {
+    // number array
+    const vrType = vrTypes[dicomElement.vr];
+    const bitsPerElement = typeof vrType !== 'undefined'
+      ? parseInt(vrType.replace(/\D/g, ''), 10) : NaN;
+    if (!isNaN(bitsPerElement)) {
+      length = value.length * bitsPerElement / 8;
+    }
+  }
+  // values have an even length
+  return length + (length % 2);
+}
+
+/**
+ * Get the length (in bytes) of the content of a sequence item.
+ *
+ * @param {Record<string, DataElement>} item The sequence item.
+ * @param {boolean} isImplicit Does the data use implicit VR?
+ * @returns {number} The item content length.
+ */
+function getItemContentLength(item, isImplicit) {
+  let length = 0;
+  for (const key of Object.keys(item)) {
+    const tag = getTagFromKey(key);
+    if (!isItemTag(tag)) {
+      const element = item[key];
+      length += getDataElementPrefixByteSize(element.vr, isImplicit);
+      length += getValueLength(tag, element, isImplicit);
+    }
+  }
+  return length;
+}
+
+/**
+ * Get the length (in bytes) of a sequence item, including its item
+ * and item delimitation elements.
+ *
+ * @param {Record<string, DataElement>} item The sequence item.
+ * @param {boolean} isImplicit Does the data use implicit VR?
+ * @returns {number} The item length.
+ */
+function getItemLength(item, isImplicit) {
+  const prefixLength = getDataElementPrefixByteSize('NONE', isImplicit);
+  let length = prefixLength + getItemContentLength(item, isImplicit);
+  if (item[getItemTag().getKey()]?.undefinedLength) {
+    length += prefixLength;
+  }
+  return length;
+}
+
+/**
+ * Get a dump line.
+ *
+ * @param {string} prefix A string to prepend to the line.
+ * @param {Tag} tag The DICOM tag.
+ * @param {string} vr The value representation.
+ * @param {string} value The value string.
+ * @param {string} length The value length string.
+ * @param {number} multiplicity The value multiplicity.
+ * @param {string} name The tag name.
+ * @returns {string} The line.
+ */
+function getLine(prefix, tag, vr, value, length, multiplicity, name) {
+  const group = tag.getGroup().toLowerCase();
+  const element = tag.getElement().toLowerCase();
+  const line = `(${group},${element}) ${vr} ${value}`;
+  // align #
+  return `${prefix}${line.padEnd(55)} # ${length.padStart(3)}, ` +
+    `${multiplicity} ${name}`;
+}
 
 /**
  * Get a data element as a string.
  *
- * @param {object} dicomElement The DICOM element.
+ * @param {Tag} tag The DICOM tag.
+ * @param {DataElement} dicomElement The DICOM element.
  * @param {string} prefix A string to prepend this one.
+ * @param {boolean} isImplicit Does the data use implicit VR?
  * @returns {string} The element as a string.
  */
-dwv.dicom.DicomElementsWrapper.prototype.getElementAsString = function (
-  dicomElement, prefix) {
-  // default prefix
-  prefix = prefix || '';
+function getElementAsString(tag, dicomElement, prefix, isImplicit) {
+  // get tag name from dictionary
+  const name = getDicomTagInfo(tag)?.getName() ?? 'Unknown Tag & Data';
 
-  // get element from dictionary
-  var dict = dwv.dicom.dictionary;
-  var dictElement = null;
-  if (typeof dict[dicomElement.tag.group] !== 'undefined' &&
-      typeof dict[dicomElement.tag.group][dicomElement.tag.element] !==
-      'undefined') {
-    dictElement = dict[dicomElement.tag.group][dicomElement.tag.element];
-  }
+  const vr = dicomElement.vr;
+  const isOtherVR = isBinaryVR(vr);
+  const isPixSequence = isAnyPixelDataTag(tag) &&
+    dicomElement.undefinedLength;
 
-  var deSize = dicomElement.value.length;
-  var isOtherVR = (dicomElement.vr[0].toUpperCase() === 'O');
+  const length = dicomElement.undefinedLength
+    ? 'u/l' : getValueLength(tag, dicomElement, isImplicit).toString();
 
-  // no size for delimitations
-  if (dicomElement.tag.group === '0xFFFE' && (
-    dicomElement.tag.element === '0xE00D' ||
-            dicomElement.tag.element === '0xE0DD')) {
-    deSize = 0;
-  } else if (isOtherVR) {
-    deSize = 1;
-  }
-
-  var isPixSequence = (dicomElement.tag.group === '0x7FE0' &&
-        dicomElement.tag.element === '0x0010' &&
-        dicomElement.vl === 'u/l');
-
-  var line = null;
-
-  // (group,element)
-  line = '(';
-  line += dicomElement.tag.group.substr(2, 5).toLowerCase();
-  line += ',';
-  line += dicomElement.tag.element.substr(2, 5).toLowerCase();
-  line += ') ';
-  // value representation
-  line += dicomElement.vr;
-  // value
-  if (dicomElement.vr !== 'SQ' &&
+  let multiplicity = dicomElement.value.length;
+  let value;
+  if (vr !== 'SQ' &&
     dicomElement.value.length === 1 &&
     dicomElement.value[0] === '') {
-    line += ' (no value available)';
-    deSize = 0;
-  } else {
-    // simple number display
-    if (dicomElement.vr === 'na') {
-      line += ' ';
-      line += dicomElement.value[0];
-    } else if (isPixSequence) {
-      // pixel sequence
-      line += ' (PixelSequence #=' + deSize + ')';
-    } else if (dicomElement.vr === 'SQ') {
-      line += ' (Sequence with';
-      if (dicomElement.vl === 'u/l') {
-        line += ' undefined';
-      } else {
-        line += ' explicit';
-      }
-      line += ' length #=';
-      line += dicomElement.value.length;
-      line += ')';
-    } else if (isOtherVR ||
-        dicomElement.vr === 'pi' ||
-        dicomElement.vr === 'UL' ||
-        dicomElement.vr === 'US' ||
-        dicomElement.vr === 'SL' ||
-        dicomElement.vr === 'SS' ||
-        dicomElement.vr === 'FL' ||
-        dicomElement.vr === 'FD' ||
-        dicomElement.vr === 'AT') {
-      // 'O'ther array, limited display length
-      line += ' ';
-      line += this.getElementValueAsString(dicomElement, false);
-    } else {
-      // default
-      line += ' [';
-      line += this.getElementValueAsString(dicomElement, false);
-      line += ']';
+    value = '(no value available)';
+    multiplicity = 0;
+  } else if (isPixSequence) {
+    value = `(PixelSequence #=${dicomElement.value.length})`;
+    multiplicity = 1;
+  } else if (vr === 'SQ') {
+    const lengthType = dicomElement.undefinedLength ? 'undefined' : 'explicit';
+    value = `(Sequence with ${lengthType} length` +
+      ` #=${dicomElement.value.length})`;
+    multiplicity = 1;
+  } else if (isOtherVR ||
+    vr === 'UL' ||
+    vr === 'US' ||
+    vr === 'SL' ||
+    vr === 'SS' ||
+    vr === 'FL' ||
+    vr === 'FD' ||
+    vr === 'AT') {
+    // 'O'ther array, limited display length
+    value = getElementValueAsString(tag, dicomElement, false);
+    if (isOtherVR) {
+      multiplicity = 1;
     }
-  }
-
-  // align #
-  var nSpaces = 55 - line.length;
-  if (nSpaces > 0) {
-    for (var s = 0; s < nSpaces; ++s) {
-      line += ' ';
-    }
-  }
-  line += ' # ';
-  if (dicomElement.vl < 100) {
-    line += ' ';
-  }
-  if (dicomElement.vl < 10) {
-    line += ' ';
-  }
-  line += dicomElement.vl;
-  line += ', ';
-  line += deSize; //dictElement[1];
-  line += ' ';
-  if (dictElement !== null) {
-    line += dictElement[2];
   } else {
-    line += 'Unknown Tag & Data';
+    // default
+    value = `[${getElementValueAsString(tag, dicomElement, false)}]`;
   }
 
-  var message = null;
+  const lines = [getLine(prefix, tag, vr, value, length, multiplicity, name)];
 
-  // continue for sequence
-  if (dicomElement.vr === 'SQ') {
-    var item = null;
-    for (var l = 0, lenl = dicomElement.value.length; l < lenl; ++l) {
-      item = dicomElement.value[l];
-      var itemKeys = Object.keys(item);
+  if (vr === 'SQ') {
+    // sequence items
+    const itemTag = getItemTag();
+    for (const item of dicomElement.value) {
+      const itemKeys = Object.keys(item).sort();
       if (itemKeys.length === 0) {
         continue;
       }
+      const elementKeys = itemKeys.filter(
+        (key) => !isItemTag(getTagFromKey(key)));
+      const isItemUndefinedLength =
+        item[itemTag.getKey()]?.undefinedLength === true;
 
-      // get the item element
-      var itemElement = item.xFFFEE000;
-      message = '(Item with';
-      if (itemElement.vl === 'u/l') {
-        message += ' undefined';
-      } else {
-        message += ' explicit';
-      }
-      message += ' length #=' + (itemKeys.length - 1) + ')';
-      itemElement.value = [message];
-      itemElement.vr = 'na';
+      const itemLengthType = isItemUndefinedLength ? 'undefined' : 'explicit';
+      const itemLength = isItemUndefinedLength
+        ? 'u/l' : getItemContentLength(item, isImplicit).toString();
+      lines.push(getLine(`${prefix}  `, itemTag, 'na',
+        `(Item with ${itemLengthType} length #=${elementKeys.length})`,
+        itemLength, 1, 'Item'));
 
-      line += '\n';
-      line += this.getElementAsString(itemElement, prefix + '  ');
-
-      for (var m = 0, lenm = itemKeys.length; m < lenm; ++m) {
-        if (itemKeys[m] !== 'xFFFEE000') {
-          line += '\n';
-          line += this.getElementAsString(item[itemKeys[m]], prefix + '    ');
-        }
+      for (const key of elementKeys) {
+        lines.push(getElementAsString(
+          getTagFromKey(key), item[key], `${prefix}    `, isImplicit));
       }
 
-      message = '(ItemDelimitationItem';
-      if (itemElement.vl !== 'u/l') {
-        message += ' for re-encoding';
-      }
-      message += ')';
-      var itemDelimElement = {
-        tag: {group: '0xFFFE', element: '0xE00D'},
-        vr: 'na',
-        vl: '0',
-        value: [message]
-      };
-      line += '\n';
-      line += this.getElementAsString(itemDelimElement, prefix + '  ');
-
+      const itemDelimSuffix = isItemUndefinedLength ? '' : ' for re-encoding';
+      lines.push(getLine(`${prefix}  `, getItemDelimitationItemTag(),
+        'na', `(ItemDelimitationItem${itemDelimSuffix})`,
+        '0', 0, 'ItemDelimitationItem'));
     }
 
-    message = '(SequenceDelimitationItem';
-    if (dicomElement.vl !== 'u/l') {
-      message += ' for re-encod.';
-    }
-    message += ')';
-    var sqDelimElement = {
-      tag: {group: '0xFFFE', element: '0xE0DD'},
-      vr: 'na',
-      vl: '0',
-      value: [message]
-    };
-    line += '\n';
-    line += this.getElementAsString(sqDelimElement, prefix);
+    const sqDelimSuffix = dicomElement.undefinedLength ? '' : ' for re-encod.';
+    lines.push(getLine(prefix, getSequenceDelimitationItemTag(),
+      'na', `(SequenceDelimitationItem${sqDelimSuffix})`,
+      '0', 0, 'SequenceDelimitationItem'));
   } else if (isPixSequence) {
-    // pixel sequence
-    var pixItem = null;
-    for (var n = 0, lenn = dicomElement.value.length; n < lenn; ++n) {
-      pixItem = dicomElement.value[n];
-      line += '\n';
-      pixItem.vr = 'pi';
-      line += this.getElementAsString(pixItem, prefix + '  ');
+    // pixel sequence fragments
+    const itemTag = getItemTag();
+    for (const fragment of dicomElement.value) {
+      const fragmentElement = new DataElement('OB');
+      fragmentElement.value = fragment;
+      lines.push(getLine(`${prefix}  `, itemTag, 'pi',
+        getElementValueAsString(itemTag, fragmentElement, false),
+        fragment.byteLength.toString(), 1, 'Item'));
     }
 
-    var pixDelimElement = {
-      tag: {group: '0xFFFE', element: '0xE0DD'},
-      vr: 'na',
-      vl: '0',
-      value: ['(SequenceDelimitationItem)']
-    };
-    line += '\n';
-    line += this.getElementAsString(pixDelimElement, prefix);
+    lines.push(getLine(prefix, getSequenceDelimitationItemTag(),
+      'na', '(SequenceDelimitationItem)',
+      '0', 0, 'SequenceDelimitationItem'));
   }
 
-  return prefix + line;
-};
-
-/**
- * Get a DICOM Element value from a group and an element.
- *
- * @param {number} group The group.
- * @param {number} element The element.
- * @returns {object} The DICOM element value.
- */
-dwv.dicom.DicomElementsWrapper.prototype.getFromGroupElement = function (
-  group, element) {
-  return this.getFromKey(
-    dwv.dicom.getGroupElementKey(group, element));
-};
-
-/**
- * Get a DICOM Element value from a tag name.
- * Uses the DICOM dictionary.
- *
- * @param {string} name The tag name.
- * @returns {object} The DICOM element value.
- */
-dwv.dicom.DicomElementsWrapper.prototype.getFromName = function (name) {
-  var value = null;
-  var tagGE = dwv.dicom.getGroupElementFromName(name);
-  // check that we are not at the end of the dictionary
-  if (tagGE.group !== null && tagGE.element !== null) {
-    value = this.getFromKey(
-      dwv.dicom.getGroupElementKey(tagGE.group, tagGE.element)
-    );
-  }
-  return value;
-};
-
-/**
- * Get the file list from a DICOMDIR
- *
- * @param {object} data The buffer data of the DICOMDIR
- * @returns {Array} The file list as an array ordered by
- *   STUDY > SERIES > IMAGES.
- */
-dwv.dicom.getFileListFromDicomDir = function (data) {
-  // parse file
-  var parser = new dwv.dicom.DicomParser();
-  parser.parse(data);
-  var elements = parser.getRawDicomElements();
-
-  // Directory Record Sequence
-  if (typeof elements.x00041220 === 'undefined' ||
-        typeof elements.x00041220.value === 'undefined') {
-    dwv.logger.warn('No Directory Record Sequence found in DICOMDIR.');
-    return;
-  }
-  var dirSeq = elements.x00041220.value;
-
-  if (dirSeq.length === 0) {
-    dwv.logger.warn('The Directory Record Sequence of the DICOMDIR is empty.');
-    return;
-  }
-
-  var records = [];
-  var series = null;
-  var study = null;
-  for (var i = 0; i < dirSeq.length; ++i) {
-    // Directory Record Type
-    if (typeof dirSeq[i].x00041430 === 'undefined' ||
-            typeof dirSeq[i].x00041430.value === 'undefined') {
-      continue;
-    }
-    var recType = dwv.dicom.cleanString(dirSeq[i].x00041430.value[0]);
-
-    // supposed to come in order...
-    if (recType === 'STUDY') {
-      study = [];
-      records.push(study);
-    } else if (recType === 'SERIES') {
-      series = [];
-      study.push(series);
-    } else if (recType === 'IMAGE') {
-      // Referenced File ID
-      if (typeof dirSeq[i].x00041500 === 'undefined' ||
-                typeof dirSeq[i].x00041500.value === 'undefined') {
-        continue;
-      }
-      var refFileIds = dirSeq[i].x00041500.value;
-      // clean and join ids
-      var refFileId = '';
-      for (var j = 0; j < refFileIds.length; ++j) {
-        if (j !== 0) {
-          refFileId += '/';
-        }
-        refFileId += dwv.dicom.cleanString(refFileIds[j]);
-      }
-      series.push(refFileId);
-    }
-  }
-  return records;
-};
+  return lines.join('\n');
+}

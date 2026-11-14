@@ -1,251 +1,497 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
+import {isSimilar} from './number.js';
+import {Vector3D} from './vector.js';
 
 /**
  * Immutable 2D point.
- *
- * @class
- * @param {number} x The X coordinate for the point.
- * @param {number} y The Y coordinate for the point.
  */
-dwv.math.Point2D = function (x, y) {
+export class Point2D {
+
+  /**
+   * X position.
+   *
+   * @type {number}
+   */
+  #x;
+
+  /**
+   * Y position.
+   *
+   * @type {number}
+   */
+  #y;
+
+  /**
+   * @param {number} x The X coordinate for the point.
+   * @param {number} y The Y coordinate for the point.
+   */
+  constructor(x, y) {
+    this.#x = x;
+    this.#y = y;
+  }
+
   /**
    * Get the X position of the point.
    *
    * @returns {number} The X position of the point.
    */
-  this.getX = function () {
-    return x;
-  };
+  getX() {
+    return this.#x;
+  }
+
   /**
    * Get the Y position of the point.
    *
    * @returns {number} The Y position of the point.
    */
-  this.getY = function () {
-    return y;
-  };
-}; // Point2D class
+  getY() {
+    return this.#y;
+  }
 
-/**
- * Check for Point2D equality.
- *
- * @param {object} rhs The other point to compare to.
- * @returns {boolean} True if both points are equal.
- */
-dwv.math.Point2D.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getX() === rhs.getX() &&
-    this.getY() === rhs.getY();
-};
+  /**
+   * Get the values of this point.
+   *
+   * @returns {number[]} The array of values.
+   */
+  getValues() {
+    return [this.#x, this.#y];
+  }
 
-/**
- * Get a string representation of the Point2D.
- *
- * @returns {string} The point as a string.
- */
-dwv.math.Point2D.prototype.toString = function () {
-  return '(' + this.getX() + ', ' + this.getY() + ')';
-};
+  /**
+   * Get the centroid of the point, ie itself.
+   *
+   * @returns {Point2D} The centroid point.
+   */
+  getCentroid() {
+    return this;
+  }
 
-/**
- * Get the distance to another Point2D.
- *
- * @param {dwv.math.Point2D} point2D The input point.
- * @returns {number} The distance to the input point.
- */
-dwv.math.Point2D.prototype.getDistance = function (point2D) {
-  return Math.sqrt(
-    (this.getX() - point2D.getX()) * (this.getX() - point2D.getX()) +
-    (this.getY() - point2D.getY()) * (this.getY() - point2D.getY()));
-};
+  /**
+   * Check if a point is at this point, within a tolerance.
+   *
+   * @param {Point2D} point The point to check.
+   * @param {number} [tolerance] Optional maximum distance, defaults to 0.
+   * @returns {boolean} True if the point is within tolerance.
+   */
+  contains(point, tolerance = 0) {
+    return this.getDistance(point) <= tolerance;
+  }
 
-/**
- * Round a Point2D.
- *
- * @returns {dwv.math.Point2D} The rounded point.
- */
-dwv.math.Point2D.prototype.getRound = function () {
-  return new dwv.math.Point2D(
-    Math.round(this.getX()),
-    Math.round(this.getY())
-  );
-};
+  /**
+   * Check for Point2D equality.
+   *
+   * @param {Point2D} rhs The other point to compare to.
+   * @returns {boolean} True if both points are equal.
+   */
+  equals(rhs) {
+    return rhs !== null &&
+      typeof rhs !== 'undefined' &&
+      this.#x === rhs.getX() &&
+      this.#y === rhs.getY();
+  }
 
-/**
- * Mutable 2D point.
- *
- * @class
- * @param {number} x The X coordinate for the point.
- * @param {number} y The Y coordinate for the point.
- */
-dwv.math.FastPoint2D = function (x, y) {
-  this.x = x;
-  this.y = y;
-}; // FastPoint2D class
+  /**
+   * Get a string representation of the Point2D.
+   *
+   * @returns {string} The point as a string.
+   */
+  toString() {
+    return `(${this.#x}, ${this.#y})`;
+  }
 
-/**
- * Check for FastPoint2D equality.
- *
- * @param {object} rhs The other point to compare to.
- * @returns {boolean} True if both points are equal.
- */
-dwv.math.FastPoint2D.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.x === rhs.x &&
-    this.y === rhs.y;
-};
+  /**
+   * Get the distance to another Point2D.
+   *
+   * @param {Point2D} point2D The input point.
+   * @returns {number} Ths distance to the input point.
+   */
+  getDistance(point2D) {
+    const dx = this.#x - point2D.getX();
+    const dy = this.#y - point2D.getY();
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 
-/**
- * Get a string representation of the FastPoint2D.
- *
- * @returns {string} The point as a string.
- */
-dwv.math.FastPoint2D.prototype.toString = function () {
-  return '(' + this.x + ', ' + this.y + ')';
-};
+} // Point2D class
 
 /**
  * Immutable 3D point.
- *
- * @class
- * @param {number} x The X coordinate for the point.
- * @param {number} y The Y coordinate for the point.
- * @param {number} z The Z coordinate for the point.
  */
-dwv.math.Point3D = function (x, y, z) {
+export class Point3D {
+
+  /**
+   * X position.
+   *
+   * @type {number}
+   */
+  #x;
+
+  /**
+   * Y position.
+   *
+   * @type {number}
+   */
+  #y;
+
+  /**
+   * Z position.
+   *
+   * @type {number}
+   */
+  #z;
+
+  /**
+   * @param {number} x The X coordinate for the point.
+   * @param {number} y The Y coordinate for the point.
+   * @param {number} z The Z coordinate for the point.
+   */
+  constructor(x, y, z) {
+    this.#x = x;
+    this.#y = y;
+    this.#z = z;
+  }
+
   /**
    * Get the X position of the point.
    *
    * @returns {number} The X position of the point.
    */
-  this.getX = function () {
-    return x;
-  };
+  getX() {
+    return this.#x;
+  }
+
   /**
    * Get the Y position of the point.
    *
    * @returns {number} The Y position of the point.
    */
-  this.getY = function () {
-    return y;
-  };
+  getY() {
+    return this.#y;
+  }
+
   /**
    * Get the Z position of the point.
    *
    * @returns {number} The Z position of the point.
    */
-  this.getZ = function () {
-    return z;
-  };
-}; // Point3D class
+  getZ() {
+    return this.#z;
+  }
 
-/**
- * Check for Point3D equality.
- *
- * @param {object} rhs The other point to compare to.
- * @returns {boolean} True if both points are equal.
- */
-dwv.math.Point3D.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getX() === rhs.getX() &&
-    this.getY() === rhs.getY() &&
-    this.getZ() === rhs.getZ();
-};
-
-/**
- * Get a string representation of the Point3D.
- *
- * @returns {string} The point as a string.
- */
-dwv.math.Point3D.prototype.toString = function () {
-  return '(' + this.getX() +
-    ', ' + this.getY() +
-    ', ' + this.getZ() + ')';
-};
-
-/**
- * Get the distance to another Point3D.
- *
- * @param {dwv.math.Point3D} point3D The input point.
- * @returns {number} Ths distance to the input point.
- */
-dwv.math.Point3D.prototype.getDistance = function (point3D) {
-  return Math.sqrt(
-    (this.getX() - point3D.getX()) * (this.getX() - point3D.getX()) +
-    (this.getY() - point3D.getY()) * (this.getY() - point3D.getY()) +
-    (this.getZ() - point3D.getZ()) * (this.getZ() - point3D.getZ()));
-};
-
-/**
- * Get the difference to another Point3D.
- *
- * @param {dwv.math.Point3D} point3D The input point.
- * @returns {object} The 3D vector from the input point to this one.
- */
-dwv.math.Point3D.prototype.minus = function (point3D) {
-  return new dwv.math.Vector3D(
-    (this.getX() - point3D.getX()),
-    (this.getY() - point3D.getY()),
-    (this.getZ() - point3D.getZ()));
-};
-
-/**
- * Immutable 3D index.
- *
- * @class
- * @param {number} i The column index.
- * @param {number} j The row index.
- * @param {number} k The slice index.
- */
-dwv.math.Index3D = function (i, j, k) {
   /**
-   * Get the column index.
+   * Get the values of this point.
    *
-   * @returns {number} The column index.
+   * @returns {number[]} The array of values.
    */
-  this.getI = function () {
-    return i;
-  };
+  getValues() {
+    return [this.#x, this.#y, this.#z];
+  }
+
   /**
-   * Get the row index.
+   * Check for Point3D equality.
    *
-   * @returns {number} The row index.
+   * @param {Point3D} rhs The other point to compare to.
+   * @returns {boolean} True if both points are equal.
    */
-  this.getJ = function () {
-    return j;
-  };
+  equals(rhs) {
+    return rhs !== null &&
+      this.#x === rhs.getX() &&
+      this.#y === rhs.getY() &&
+      this.#z === rhs.getZ();
+  }
+
   /**
-   * Get the slice index.
+   * Check for Point3D similarity.
    *
-   * @returns {number} The slice index.
+   * @param {Point3D} rhs The other point to compare to.
+   * @param {number} [tol] Optional number comparison tolerance,
+   *   defaults to Number.EPSILON.
+   * @returns {boolean} True if both points are similar.
    */
-  this.getK = function () {
-    return k;
-  };
-}; // Index3D class
+  isSimilar(rhs, tol) {
+    return rhs !== null &&
+      isSimilar(this.#x, rhs.getX(), tol) &&
+      isSimilar(this.#y, rhs.getY(), tol) &&
+      isSimilar(this.#z, rhs.getZ(), tol);
+  }
+
+  /**
+   * Get a string representation of the Point3D.
+   *
+   * @returns {string} The point as a string.
+   */
+  toString() {
+    return `(${ this.#x
+    }, ${ this.#y
+    }, ${this.#z})`;
+  }
+
+  /**
+   * Get the distance to another Point3D.
+   *
+   * @param {Point3D} point3D The input point.
+   * @returns {number} Ths distance to the input point.
+   */
+  getDistance(point3D) {
+    return Math.sqrt(this.#getSquaredDistance(point3D));
+  }
+
+  /**
+   * Get the square of the distance between this and
+   * an input point. Used for sorting.
+   *
+   * @param {Point3D} point3D The input point.
+   * @returns {number} The square of the distance.
+   */
+  #getSquaredDistance(point3D) {
+    const dx = this.#x - point3D.getX();
+    const dy = this.#y - point3D.getY();
+    const dz = this.#z - point3D.getZ();
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  /**
+   * Get the closest point to this in a Point3D list.
+   *
+   * @param {Point3D[]} pointList The list to check.
+   * @returns {number} The index of the closest point in the input list.
+   */
+  getClosest(pointList) {
+    let minIndex = 0;
+    // the order between squared distances and distances is the same
+    let minDist = this.#getSquaredDistance(pointList[minIndex]);
+    for (let i = 0; i < pointList.length; ++i) {
+      const dist = this.#getSquaredDistance(pointList[i]);
+      if (dist < minDist) {
+        minIndex = i;
+        minDist = dist;
+      }
+    }
+    return minIndex;
+  }
+
+  /**
+   * Get the difference to another Point3D.
+   *
+   * @param {Point3D} point3D The input point.
+   * @returns {Vector3D} The 3D vector from the input point to this one.
+   */
+  minus(point3D) {
+    return new Vector3D(
+      (this.#x - point3D.getX()),
+      (this.#y - point3D.getY()),
+      (this.#z - point3D.getZ()));
+  }
+
+} // Point3D class
 
 /**
- * Check for Index3D equality.
+ * Get an array find callback for an equal input point.
  *
- * @param {object} rhs The other index to compare to.
- * @returns {boolean} True if both indices are equal.
+ * @param {Point3D} point The point to compare to.
+ * @returns {function(Point3D): boolean} A function that compares,
+ *   using `equals`, its input point to the one given as input to
+ *   this function.
  */
-dwv.math.Index3D.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getI() === rhs.getI() &&
-    this.getJ() === rhs.getJ() &&
-    this.getK() === rhs.getK();
-};
+export function getEqualPoint3DFunction(point) {
+  return function (element) {
+    return element.equals(point);
+  };
+}
 
 /**
- * Get a string representation of the Index3D.
+ * Check if an array of Point3D includes a given one.
  *
- * @returns {string} The Index3D as a string.
+ * @param {Point3D[]} arr The array of Point3D.
+ * @param {Point3D} val The Point3D to look for.
+ * @returns {boolean} True if included.
  */
-dwv.math.Index3D.prototype.toString = function () {
-  return '(' + this.getI() +
-    ', ' + this.getJ() +
-    ', ' + this.getK() + ')';
-};
+export function includesPoint3D(arr, val) {
+  return arr.some(function (arrVal) {
+    return val.equals(arrVal);
+  });
+}
+
+/**
+ * Create a {@link Point3D} from an array.
+ *
+ * @param {number[]} arr The input array.
+ * @returns {Point3D} The point.
+ */
+export function point3DFromArray(arr) {
+  return new Point3D(arr[0], arr[1], arr[2]);
+}
+
+/**
+ * Immutable point.
+ * Warning: the input array is NOT cloned, modifying it will
+ *  modify the point values.
+ */
+export class Point {
+
+  /**
+   * Point values.
+   *
+   * @type {number[]}
+   */
+  #values;
+
+  /**
+   * @param {number[]} values The point values.
+   */
+  constructor(values) {
+    if (!values || typeof values === 'undefined') {
+      throw new Error('Cannot create point with no values.');
+    }
+    if (values.length === 0) {
+      throw new Error('Cannot create point with empty values.');
+    }
+    const valueCheck = function (val) {
+      return !isNaN(val);
+    };
+    if (!values.every(valueCheck)) {
+      throw new Error('Cannot create point with non number values.');
+    }
+    this.#values = values;
+  }
+
+  /**
+   * Get the point value at the given array index.
+   *
+   * @param {number} i The index to get.
+   * @returns {number} The value.
+   */
+  get(i) {
+    return this.#values[i];
+  }
+
+  /**
+   * Get the length of the point.
+   *
+   * @returns {number} The length.
+   */
+  length() {
+    return this.#values.length;
+  }
+
+  /**
+   * Get a string representation of the point.
+   *
+   * @returns {string} The point as a string.
+   */
+  toString() {
+    return `(${this.#values.toString()})`;
+  }
+
+  /**
+   * Get the values of this point.
+   *
+   * @returns {number[]} The array of values.
+   */
+  getValues() {
+    return this.#values.slice();
+  }
+
+  /**
+   * Check if the input point can be compared to this one.
+   *
+   * @param {Point} rhs The point to compare to.
+   * @returns {boolean} True if both points are comparable.
+   */
+  canCompare(rhs) {
+    // check input
+    if (!rhs) {
+      return false;
+    }
+    // check length
+    if (this.length() !== rhs.length()) {
+      return false;
+    }
+    // seems ok!
+    return true;
+  }
+
+  /**
+   * Check for Point equality.
+   *
+   * @param {Point} rhs The point to compare to.
+   * @returns {boolean} True if both points are equal.
+   */
+  equals(rhs) {
+    // check if can compare
+    if (!this.canCompare(rhs)) {
+      return false;
+    }
+    // check values
+    for (let i = 0, leni = this.length(); i < leni; ++i) {
+      if (this.get(i) !== rhs.get(i)) {
+        return false;
+      }
+    }
+    // seems ok!
+    return true;
+  }
+
+  /**
+   * Compare points and return different dimensions.
+   *
+   * @param {Point} rhs The point to compare to.
+   * @returns {number[]} The list of different dimensions.
+   */
+  compare(rhs) {
+    // check if can compare
+    if (!this.canCompare(rhs)) {
+      return null;
+    }
+    // check values
+    const diffDims = [];
+    for (let i = 0, leni = this.length(); i < leni; ++i) {
+      if (this.get(i) !== rhs.get(i)) {
+        diffDims.push(i);
+      }
+    }
+    return diffDims;
+  }
+
+  /**
+   * Get the 3D part of this point.
+   *
+   * @returns {Point3D} The Point3D.
+   */
+  get3D() {
+    return new Point3D(this.get(0), this.get(1), this.get(2));
+  }
+
+  /**
+   * Add another point to this one.
+   *
+   * @param {Point} rhs The point to add.
+   * @returns {Point} The point representing the sum of both points.
+   */
+  add(rhs) {
+    // check if can compare
+    if (!this.canCompare(rhs)) {
+      return null;
+    }
+    const values = [];
+    const values0 = this.getValues();
+    const values1 = rhs.getValues();
+    for (let i = 0; i < values0.length; ++i) {
+      values.push(values0[i] + values1[i]);
+    }
+    return new Point(values);
+  }
+
+  /**
+   * Merge this point with a Point3D to create a new point.
+   *
+   * @param {Point3D} rhs The Point3D to merge with.
+   * @returns {Point} The merge result.
+   */
+  mergeWith3D(rhs) {
+    const values = this.getValues();
+    values[0] = rhs.getX();
+    values[1] = rhs.getY();
+    values[2] = rhs.getZ();
+    return new Point(values);
+  }
+
+} // Point class

@@ -1,41 +1,144 @@
-// namespaces
-var dwv = dwv || {};
+import {InteractionEventNames} from '../gui/generic.js';
+
+/**
+ * @import {LayerGroup} from '../gui/layerGroup.js';
+ * @import {ViewLayer} from '../gui/viewLayer.js';
+ * @import {DrawLayer} from '../gui/drawLayer.js';
+ */
+
+/**
+ * Check if an event target is an editable element (input, select,
+ *   text area or content editable): keys typed in it are not shortcuts.
+ *
+ * @param {EventTarget|null} target The event target.
+ * @returns {boolean} True if editable.
+ */
+function isEditable(target) {
+  if (target === null || typeof target !== 'object') {
+    return false;
+  }
+  const element = /** @type {HTMLElement} */ (target);
+  return element.isContentEditable === true ||
+    ['INPUT', 'SELECT', 'TEXTAREA'].includes(element.tagName);
+}
 
 /**
  * Toolbox controller.
- *
- * @param {Array} toolList The list of tool objects.
- * @class
  */
-dwv.ToolboxController = function (toolList) {
+export class ToolboxController {
+
   /**
-   * Point converter function
+   * List of tools to control.
    *
-   * @private
+   * @type {object}
    */
-  var displayToIndexConverter = null;
+  #toolList;
 
   /**
    * Selected tool.
    *
    * @type {object}
-   * @private
    */
-  var selectedTool = null;
+  #selectedTool = null;
+
+  /**
+   * Callback store to allow attach/detach.
+   *
+   * @type {Array}
+   */
+  #callbackStore = [];
+
+  /**
+   * Current layers bound to tool.
+   *
+   * @type {object}
+   */
+  #boundLayers = {};
+
+  /**
+   * Ids of the layers with a touch in progress.
+   *
+   * @type {Set<string>}
+   */
+  #touchedLayerIds = new Set();
+
+  /**
+   * Layers that are not active anymore but stay bound until the end
+   * of their touch, indexed by layer id: touch events keep going to
+   * the element where the touch started.
+   *
+   * @type {Record<string, ViewLayer|DrawLayer>}
+   */
+  #pendingUnbindLayers = {};
+
+  /**
+   * Root document, listened to for keyboard shortcuts.
+   * Undefined if there is no DOM.
+   *
+   * @type {EventTarget|undefined}
+   */
+  #rootDocument;
+
+  /**
+   * @param {object} toolList The list of tool objects.
+   * @param {DocumentFragment} [rootDocument] Optional root document
+   *   to listen to for keyboard shortcuts, defaults to `document`.
+   */
+  constructor(toolList, rootDocument) {
+    this.#toolList = toolList;
+    this.#rootDocument = rootDocument;
+    if (typeof this.#rootDocument === 'undefined' &&
+      typeof document !== 'undefined') {
+      this.#rootDocument = document;
+    }
+  }
 
   /**
    * Initialise.
-   *
-   * @param {Function} converter The display to index converter.
    */
-  this.init = function (converter) {
-    for (var key in toolList) {
-      toolList[key].init();
+  init() {
+    for (const key in this.#toolList) {
+      this.#toolList[key].init();
     }
-    // TODO Would prefer to have this done in the addLayerListeners
-    displayToIndexConverter = converter;
-    // keydown listener
-    window.addEventListener('keydown', onMouch, true);
+    // enable shortcuts
+    this.enableShortcuts(true);
+  }
+
+  /**
+   * Enable or disable shortcuts. The 'init' methods enables shortcuts
+   *  by default. Call this method after init to disable shortcuts.
+   *
+   * Shortcuts are keydown events listened to on the root document
+   *   in the bubbling phase and passed to the selected tool. Events
+   *   with a prevented default or coming from editable elements
+   *   (input, select, text area, content editable) are ignored.
+   *
+   * @param {boolean} flag True to enable shortcuts.
+   */
+  enableShortcuts(flag) {
+    if (typeof this.#rootDocument === 'undefined') {
+      return;
+    }
+    if (flag) {
+      this.#rootDocument.addEventListener('keydown', this.#onKeydown);
+    } else {
+      this.#rootDocument.removeEventListener('keydown', this.#onKeydown);
+    }
+  }
+
+  /**
+   * Keydown handler: passes the event to the selected tool.
+   *
+   * @param {KeyboardEvent} event The keydown event.
+   */
+  #onKeydown = (event) => {
+    if (event.defaultPrevented || isEditable(event.target)) {
+      return;
+    }
+    const func = this.#selectedTool?.keydown;
+    if (func) {
+      func(event);
+    }
   };
 
   /**
@@ -43,207 +146,220 @@ dwv.ToolboxController = function (toolList) {
    *
    * @returns {Array} The list of tool objects.
    */
-  this.getToolList = function () {
-    return toolList;
-  };
+  getToolList() {
+    return this.#toolList;
+  }
 
   /**
    * Check if a tool is in the tool list.
    *
    * @param {string} name The name to check.
-   * @returns {string} The tool list element for the given name.
+   * @returns {boolean} The tool list element for the given name.
    */
-  this.hasTool = function (name) {
+  hasTool(name) {
     return typeof this.getToolList()[name] !== 'undefined';
-  };
+  }
 
   /**
    * Get the selected tool.
    *
    * @returns {object} The selected tool.
    */
-  this.getSelectedTool = function () {
-    return selectedTool;
-  };
+  getSelectedTool() {
+    return this.#selectedTool;
+  }
 
   /**
    * Get the selected tool event handler.
    *
    * @param {string} eventType The event type, for example
    *   mousedown, touchstart...
-   * @returns {Function} The event handler.
+   * @returns {EventListener|undefined} The event handler, undefined
+   *   if no tool is selected.
    */
-  this.getSelectedToolEventHandler = function (eventType) {
+  getSelectedToolEventHandler(eventType) {
+    if (!this.getSelectedTool()) {
+      return undefined;
+    }
     return this.getSelectedTool()[eventType];
-  };
+  }
 
   /**
    * Set the selected tool.
    *
    * @param {string} name The name of the tool.
    */
-  this.setSelectedTool = function (name) {
+  setSelectedTool(name) {
     // check if we have it
     if (!this.hasTool(name)) {
-      throw new Error('Unknown tool: \'' + name + '\'');
+      throw new Error(`Unknown tool: '${name}'`);
     }
     // de-activate previous
-    if (selectedTool) {
-      selectedTool.activate(false);
+    if (this.#selectedTool) {
+      this.#selectedTool.activate(false);
     }
     // set internal var
-    selectedTool = toolList[name];
+    this.#selectedTool = this.#toolList[name];
     // activate new tool
-    selectedTool.activate(true);
-  };
+    this.#selectedTool.activate(true);
+  }
 
   /**
-   * Set the selected shape.
+   * Set the selected tool live features.
    *
-   * @param {string} name The name of the shape.
+   * @param {object} list The list of features.
    */
-  this.setSelectedShape = function (name) {
-    this.getSelectedTool().setShapeName(name);
-  };
-
-  /**
-   * Set the selected filter.
-   *
-   * @param {string} name The name of the filter.
-   */
-  this.setSelectedFilter = function (name) {
-    this.getSelectedTool().setSelectedFilter(name);
-  };
-
-  /**
-   * Run the selected filter.
-   */
-  this.runSelectedFilter = function () {
-    this.getSelectedTool().getSelectedFilter().run();
-  };
-
-  /**
-   * Set the tool line colour.
-   *
-   * @param {string} colour The colour.
-   */
-  this.setLineColour = function (colour) {
-    this.getSelectedTool().setLineColour(colour);
-  };
-
-  /**
-   * Set the tool range.
-   *
-   * @param {object} range The new range of the data.
-   */
-  this.setRange = function (range) {
-    // seems like jquery is checking if the method exists before it
-    // is used...
-    if (this.getSelectedTool() &&
-      this.getSelectedTool().getSelectedFilter()) {
-      this.getSelectedTool().getSelectedFilter().run(range);
+  setToolFeatures(list) {
+    if (this.getSelectedTool()) {
+      this.getSelectedTool().setFeatures(list);
     }
-  };
+  }
 
   /**
    * Listen to layer interaction events.
    *
-   * @param {object} layer The layer to listen to.
+   * @param {LayerGroup} layerGroup The associated layer group.
+   * @param {ViewLayer|DrawLayer} layer The layer to listen to.
    */
-  this.attachLayer = function (layer) {
-    layer.activate();
-    // interaction events
-    var names = dwv.gui.interactionEventNames;
-    for (var i = 0; i < names.length; ++i) {
-      layer.addEventListener(names[i], onMouch);
-    }
-  };
+  bindLayerGroup(layerGroup, layer) {
+    const divId = layerGroup.getDivId();
+    // listen to active layer changes
+    layerGroup.addEventListener(
+      'activelayerchange', this.#getActiveLayerChangeHandler(divId));
+    // bind the layer
+    this.#internalBindLayerGroup(divId, layer);
+  }
 
   /**
-   * Remove canvas mouse and touch listeners.
+   * Bind a layer group to this controller.
    *
-   * @param {object} layer The layer to stop listening to.
+   * @param {string} layerGroupDivId The layer group div id.
+   * @param {ViewLayer|DrawLayer} layer The layer.
    */
-  this.detachLayer = function (layer) {
-    layer.deactivate();
-    // interaction events
-    var names = dwv.gui.interactionEventNames;
-    for (var i = 0; i < names.length; ++i) {
-      layer.removeEventListener(names[i], onMouch);
+  #internalBindLayerGroup(layerGroupDivId, layer) {
+    // remove from local list if preset
+    const previous = this.#boundLayers[layerGroupDivId];
+    if (typeof previous !== 'undefined') {
+      if (this.#touchedLayerIds.has(previous.getId())) {
+        // keep it bound until the end of its touch
+        this.#pendingUnbindLayers[previous.getId()] = previous;
+      } else {
+        this.#unbindLayer(previous);
+      }
     }
-  };
+    // replace layer in local list
+    this.#boundLayers[layerGroupDivId] = layer;
+    // bind layer if not still bound
+    if (typeof this.#pendingUnbindLayers[layer.getId()] !== 'undefined') {
+      delete this.#pendingUnbindLayers[layer.getId()];
+    } else {
+      this.#bindLayer(layer);
+    }
+  }
+
+  /**
+   * End the touch of a layer and unbind it if it is not active anymore.
+   *
+   * @param {string} layerId The layer id.
+   * @param {TouchEvent} event The touch end or cancel event.
+   */
+  #endTouch(layerId, event) {
+    // other touches started on the same target are still in progress
+    if (event.targetTouches?.length > 0) {
+      return;
+    }
+    this.#touchedLayerIds.delete(layerId);
+    const pending = this.#pendingUnbindLayers[layerId];
+    if (typeof pending !== 'undefined') {
+      delete this.#pendingUnbindLayers[layerId];
+      this.#unbindLayer(pending);
+    }
+  }
+
+  /**
+   * Get an active layer change handler.
+   *
+   * @param {string} divId The associated layer group div id.
+   * @returns {EventListener} The event handler.
+   */
+  #getActiveLayerChangeHandler(divId) {
+    return ((/** @type {CustomEvent} */ event) => {
+      const value = event.detail?.value;
+      const layer = value?.[0];
+      if (typeof layer !== 'undefined') {
+        this.#internalBindLayerGroup(divId, layer);
+      }
+    });
+  }
+
+  /**
+   * Add canvas mouse and touch listeners to a layer.
+   *
+   * @param {ViewLayer|DrawLayer} layer The layer to start listening to.
+   */
+  #bindLayer(layer) {
+    layer.bindInteraction();
+    // interaction events
+    const names = InteractionEventNames;
+    for (let i = 0; i < names.length; ++i) {
+      layer.addEventListener(names[i],
+        this.#getCallback(layer.getId(), names[i]));
+    }
+  }
+
+  /**
+   * Remove canvas mouse and touch listeners to a layer.
+   *
+   * @param {ViewLayer|DrawLayer} layer The layer to stop listening to.
+   */
+  #unbindLayer(layer) {
+    layer.unbindInteraction();
+    // interaction events
+    const names = InteractionEventNames;
+    for (let i = 0; i < names.length; ++i) {
+      layer.removeEventListener(names[i],
+        this.#getCallback(layer.getId(), names[i]));
+    }
+  }
 
   /**
    * Mou(se) and (T)ouch event handler. This function just determines
    * the mouse/touch position relative to the canvas element.
    * It then passes it to the current tool.
    *
-   * @param {object} event The event to handle.
-   * @private
+   * @param {string} layerId The layer id.
+   * @param {string} eventType The event type.
+   * @returns {object} A callback for the provided layer and event.
    */
-  function onMouch(event) {
-    // make sure we have a tool
-    if (!selectedTool) {
-      return;
+  #getCallback(layerId, eventType) {
+    if (typeof this.#callbackStore[layerId] === 'undefined') {
+      this.#callbackStore[layerId] = [];
     }
 
-    // flag not to get confused between touch and mouse
-    var handled = false;
-    // Store the event position relative to the image canvas
-    // in an extra member of the event:
-    // event._x and event._y.
-    var offsets = null;
-    var position = null;
-    if (event.type === 'touchstart' ||
-            event.type === 'touchmove') {
-      // event offset(s)
-      offsets = dwv.html.getEventOffset(event);
-      // should have at least one offset
-      event._xs = offsets[0].x;
-      event._ys = offsets[0].y;
-      position = displayToIndexConverter(offsets[0]);
-      event._x = parseInt(position.x, 10);
-      event._y = parseInt(position.y, 10);
-      // possible second
-      if (offsets.length === 2) {
-        event._x1s = offsets[1].x;
-        event._y1s = offsets[1].y;
-        position = displayToIndexConverter(offsets[1]);
-        event._x1 = parseInt(position.x, 10);
-        event._y1 = parseInt(position.y, 10);
-      }
-      // set handle event flag
-      handled = true;
-    } else if (event.type === 'mousemove' ||
-            event.type === 'mousedown' ||
-            event.type === 'mouseup' ||
-            event.type === 'mouseout' ||
-            event.type === 'mousewheel' ||
-            event.type === 'dblclick' ||
-            event.type === 'DOMMouseScroll') {
-      offsets = dwv.html.getEventOffset(event);
-      event._xs = offsets[0].x;
-      event._ys = offsets[0].y;
-      position = displayToIndexConverter(offsets[0]);
-      event._x = parseInt(position.x, 10);
-      event._y = parseInt(position.y, 10);
-      // set handle event flag
-      handled = true;
-    } else if (event.type === 'keydown' ||
-                event.type === 'touchend') {
-      handled = true;
+    if (typeof this.#callbackStore[layerId][eventType] === 'undefined') {
+      const applySelectedTool = (event) => {
+        // store the touch before the tool handles it: the tool can
+        // change the active layer (for ex the draw tool creating a draw
+        // layer), the layer is then kept bound until the end of its touch
+        if (event.type === 'touchstart') {
+          this.#touchedLayerIds.add(layerId);
+        }
+        // make sure we have a tool
+        if (this.#selectedTool) {
+          const func = this.#selectedTool[event.type];
+          if (func) {
+            func(event);
+          }
+        }
+        if (event.type === 'touchend' || event.type === 'touchcancel') {
+          this.#endTouch(layerId, event);
+        }
+      };
+      // store callback
+      this.#callbackStore[layerId][eventType] = applySelectedTool;
     }
 
-    // Call the event handler of the curently selected tool.
-    if (handled) {
-      if (event.type !== 'keydown') {
-        event.preventDefault();
-      }
-      var func = selectedTool[event.type];
-      if (func) {
-        func(event);
-      }
-    }
+    return this.#callbackStore[layerId][eventType];
   }
 
-}; // class dwv.ToolboxController
+} // class ToolboxController

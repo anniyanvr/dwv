@@ -1,72 +1,61 @@
-// namespaces
-var dwv = dwv || {};
-dwv.io = dwv.io || {};
+import {fileContentTypes} from './filesLoader.js';
+import {urlContentTypes} from './urlsLoader.js';
+import {MemoryLoader} from './memoryLoader.js';
+import {LoaderBase} from './loaderBase.js';
+
 /**
  * The zip library.
  *
+ * Ref: {@link https://github.com/Stuk/jszip}.
+ *
  * @external JSZip
- * @see https://github.com/Stuk/jszip
  */
-var JSZip = JSZip || {};
+import JSZip from 'jszip';
 
 /**
  * ZIP data loader.
- *
- * @class
  */
-dwv.io.ZipLoader = function () {
-  // closure to self
-  var self = this;
+export class ZipLoader extends LoaderBase {
 
   /**
-   * Loading flag.
+   * Current file name.
    *
-   * @private
-   * @type {boolean}
+   * @type {string}
    */
-  var isLoading = false;
+  #filename = '';
 
   /**
-   * Set the loader options.
+   * List of files.
    *
-   * @param {object} _opt The input options.
+   * @type {object[]}
    */
-  this.setOptions = function (_opt) {
-    // does nothing
-  };
+  #files = [];
 
   /**
-   * Is the load ongoing?
+   * Zip file objects.
    *
-   * @returns {boolean} True if loading.
+   * @type {object[]}
    */
-  this.isLoading = function () {
-    return isLoading;
-  };
-
-  var filename = '';
-  var files = [];
-  var zobjs = null;
+  #zobjs = null;
 
   /**
-   * JSZip.async callback
+   * JSZip.async callback.
    *
-   * @param {ArrayBuffer} content unzipped file image
-   * @param {object} origin The origin of the file.
+   * @param {ArrayBuffer} content Unzipped file image.
+   * @param {string} origin The origin of the file.
    * @param {number} index The data index.
-   * @private
    */
-  function zipAsyncCallback(content, origin, index) {
-    files.push({filename: filename, data: content});
+  #zipAsyncCallback(content, origin, index) {
+    this.#files.push({filename: this.#filename, data: content});
 
     // sent un-ziped progress with the data index
     // (max 50% to take into account the memory loading)
-    var unzipPercent = files.length * 100 / zobjs.length;
-    self.onprogress({
+    const unzipPercent = this.#files.length * 100 / this.#zobjs.length;
+    this.onprogress({
       lengthComputable: true,
       loaded: (unzipPercent / 2),
       total: 100,
-      index: index,
+      index,
       item: {
         loaded: unzipPercent,
         total: 100,
@@ -75,34 +64,38 @@ dwv.io.ZipLoader = function () {
     });
 
     // recursively call until we have all the files
-    if (files.length < zobjs.length) {
-      var num = files.length;
-      filename = zobjs[num].name;
-      zobjs[num].async('arrayBuffer').then(function (content) {
-        zipAsyncCallback(content, origin, index);
+    if (this.#files.length < this.#zobjs.length) {
+      const num = this.#files.length;
+      this.#filename = this.#zobjs[num].name;
+      this.#zobjs[num].async('arrayBuffer').then((bufContent) => {
+        this.#zipAsyncCallback(bufContent, origin, index);
+      }).catch((err) => {
+        this.setLoading(false);
+        this.onerror({error: err});
+        this.onloadend({});
       });
     } else {
-      var memoryIO = new dwv.io.MemoryLoader();
+      const memoryIO = new MemoryLoader();
       // memoryIO.onloadstart: nothing to do
-      memoryIO.onprogress = function (progress) {
+      memoryIO.onprogress = (progress) => {
         // add 50% to take into account the un-zipping
         progress.loaded = 50 + progress.loaded / 2;
         // set data index
         progress.index = index;
-        self.onprogress(progress);
+        this.onprogress(progress);
       };
-      memoryIO.onloaditem = self.onloaditem;
-      memoryIO.onload = self.onload;
-      memoryIO.onloadend = function (event) {
+      memoryIO.onloaditem = this.onloaditem;
+      memoryIO.onload = this.onload;
+      memoryIO.onloadend = (event) => {
         // reset loading flag
-        isLoading = false;
+        this.setLoading(false);
         // call listeners
-        self.onloadend(event);
+        this.onloadend(event);
       };
-      memoryIO.onerror = self.onerror;
-      memoryIO.onabort = self.onabort;
+      memoryIO.onerror = this.onerror;
+      memoryIO.onabort = this.onabort;
       // launch
-      memoryIO.load(files);
+      memoryIO.load(this.#files);
     }
   }
 
@@ -113,135 +106,98 @@ dwv.io.ZipLoader = function () {
    * @param {string} origin The data origin.
    * @param {number} index The data index.
    */
-  this.load = function (buffer, origin, index) {
+  load(buffer, origin, index) {
     // send start event
     this.onloadstart({
       source: origin
     });
     // set loading flag
-    isLoading = true;
+    this.setLoading(true);
 
-    JSZip.loadAsync(buffer).then(function (zip) {
-      files = [];
-      zobjs = zip.file(/.*\.dcm/);
+    JSZip.loadAsync(buffer).then((zip) => {
+      this.#files = [];
+      this.#zobjs = zip.file(/.*\.dcm/);
+      if (this.#zobjs.length === 0) {
+        this.setLoading(false);
+        this.onerror({
+          error: new Error('No DICOM file found in ZIP')
+        });
+        this.onloadend({});
+        return;
+      }
       // recursively load zip files into the files array
-      var num = files.length;
-      filename = zobjs[num].name;
-      zobjs[num].async('arrayBuffer').then(function (content) {
-        zipAsyncCallback(content, origin, index);
+      this.#filename = this.#zobjs[0].name;
+      this.#zobjs[0].async('arrayBuffer').then((content) => {
+        this.#zipAsyncCallback(content, origin, index);
+      }).catch((err) => {
+        this.setLoading(false);
+        this.onerror({error: err});
+        this.onloadend({});
       });
+    }).catch((err) => {
+      this.setLoading(false);
+      this.onerror({error: err});
+      this.onloadend({});
     });
-  };
+  }
 
   /**
    * Abort load: pass to listeners.
    */
-  this.abort = function () {
+  abort() {
     // reset loading flag
-    isLoading = false;
+    this.setLoading(false);
     // call listeners
-    self.onabort({});
-    self.onloadend({});
-  };
+    this.onabort({});
+    this.onloadend({});
+  }
 
-}; // class DicomDataLoader
+  /**
+   * Check if the loader supports the input extension.
+   *
+   * @param {string} value The extensione.
+   * @returns {boolean} True if it can be loaded.
+   */
+  canLoadExtension(value) {
+    return value === 'zip';
+  }
 
-/**
- * Check if the loader can load the provided file.
- *
- * @param {object} file The file to check.
- * @returns {boolean} True if the file can be loaded.
- */
-dwv.io.ZipLoader.prototype.canLoadFile = function (file) {
-  var ext = dwv.utils.getFileExtension(file.name);
-  return (ext === 'zip');
-};
+  /**
+   * Check if the input is the loader name.
+   *
+   * @param {string} value The test name.
+   * @returns {boolean} True if input is the loader name.
+   */
+  isLoaderName(value) {
+    return value === 'zip';
+  }
 
-/**
- * Check if the loader can load the provided url.
- *
- * @param {string} url The url to check.
- * @returns {boolean} True if the url can be loaded.
- */
-dwv.io.ZipLoader.prototype.canLoadUrl = function (url) {
-  var urlObjext = dwv.utils.getUrlFromUri(url);
-  var ext = dwv.utils.getFileExtension(urlObjext.pathname);
-  return (ext === 'zip');
-};
+  /**
+   * Check if the loader supports the input media type.
+   *
+   * @param {string} value The media type.
+   * @returns {boolean} True if it can be loaded.
+   */
+  canLoadMediaType(value) {
+    return value === 'application/zip';
+  }
 
-/**
- * Get the file content type needed by the loader.
- *
- * @returns {number} One of the 'dwv.io.fileContentTypes'.
- */
-dwv.io.ZipLoader.prototype.loadFileAs = function () {
-  return dwv.io.fileContentTypes.ArrayBuffer;
-};
+  /**
+   * Get the file content type needed by the loader.
+   *
+   * @returns {number} One of the 'fileContentTypes'.
+   */
+  loadFileAs() {
+    return fileContentTypes.ArrayBuffer;
+  }
 
-/**
- * Get the url content type needed by the loader.
- *
- * @returns {number} One of the 'dwv.io.urlContentTypes'.
- */
-dwv.io.ZipLoader.prototype.loadUrlAs = function () {
-  return dwv.io.urlContentTypes.ArrayBuffer;
-};
+  /**
+   * Get the url content type needed by the loader.
+   *
+   * @returns {number} One of the 'urlContentTypes'.
+   */
+  loadUrlAs() {
+    return urlContentTypes.ArrayBuffer;
+  }
 
-/**
- * Handle a load start event.
- * Default does nothing.
- *
- * @param {object} _event The load start event.
- */
-dwv.io.ZipLoader.prototype.onloadstart = function (_event) {};
-/**
- * Handle a load progress event.
- * Default does nothing.
- *
- * @param {object} _event The progress event.
- */
-dwv.io.ZipLoader.prototype.onprogress = function (_event) {};
-/**
- * Handle a load item event.
- * Default does nothing.
- *
- * @param {object} _event The load item event fired
- *   when a file item has been loaded successfully.
- */
-dwv.io.ZipLoader.prototype.onloaditem = function (_event) {};
-/**
- * Handle a load event.
- * Default does nothing.
- *
- * @param {object} _event The load event fired
- *   when a file has been loaded successfully.
- */
-dwv.io.ZipLoader.prototype.onload = function (_event) {};
-/**
- * Handle an load end event.
- * Default does nothing.
- *
- * @param {object} _event The load end event fired
- *  when a file load has completed, successfully or not.
- */
-dwv.io.ZipLoader.prototype.onloadend = function (_event) {};
-/**
- * Handle an error event.
- * Default does nothing.
- *
- * @param {object} _event The error event.
- */
-dwv.io.ZipLoader.prototype.onerror = function (_event) {};
-/**
- * Handle an abort event.
- * Default does nothing.
- *
- * @param {object} _event The abort event.
- */
-dwv.io.ZipLoader.prototype.onabort = function (_event) {};
-
-/**
- * Add to Loader list.
- */
-dwv.io.loaderList = dwv.io.loaderList || [];
-dwv.io.loaderList.push('ZipLoader');
+} // class ZipLoader

@@ -1,114 +1,404 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
+import {Vector3D} from './vector.js';
+import {Point3D} from './point.js';
+import {Index} from './index.js';
+import {isSimilar} from './number.js';
+import {logger} from '../utils/logger.js';
 
-// difference between 1 and the smallest floating point number greater than 1
-if (typeof Number.EPSILON === 'undefined') {
-  Number.EPSILON = Math.pow(2, -52);
-}
+/**
+ * @import {TypedArray} from './types.js';
+ */
 
 /**
  * Immutable 3x3 Matrix.
- *
- * @param {number} m00 m[0][0]
- * @param {number} m01 m[0][1]
- * @param {number} m02 m[0][2]
- * @param {number} m10 m[1][0]
- * @param {number} m11 m[1][1]
- * @param {number} m12 m[1][2]
- * @param {number} m20 m[2][0]
- * @param {number} m21 m[2][1]
- * @param {number} m22 m[2][2]
- * @class
  */
-dwv.math.Matrix33 = function (
-  m00, m01, m02,
-  m10, m11, m12,
-  m20, m21, m22) {
-  // row-major order
-  var mat = new Float32Array(9);
-  mat[0] = m00; mat[1] = m01; mat[2] = m02;
-  mat[3] = m10; mat[4] = m11; mat[5] = m12;
-  mat[6] = m20; mat[7] = m21; mat[8] = m22;
+export class Matrix33 {
+
+  /**
+   * Matrix values.
+   *
+   * @type {number[]}
+   */
+  #values;
+
+  /**
+   * Matrix inverse, calculated at first ask.
+   *
+   * @type {Matrix33}
+   */
+  #inverse;
+
+  /**
+   * @param {number[]} values Row-major ordered 9 values.
+   */
+  constructor(values) {
+    this.#values = values;
+  }
 
   /**
    * Get a value of the matrix.
    *
    * @param {number} row The row at wich to get the value.
    * @param {number} col The column at wich to get the value.
-   * @returns {number} The value at the position.
+   * @returns {number|undefined} The value at the position.
    */
-  this.get = function (row, col) {
-    return mat[row * 3 + col];
-  };
-}; // Matrix33
-
-/**
- * Check for Matrix33 equality.
- *
- * @param {object} rhs The other matrix to compare to.
- * @param {number} p A numeric expression for the precision to use in check
- *   (ex: 0.001). Defaults to Number.EPSILON if not provided.
- * @returns {boolean} True if both matrices are equal.
- */
-dwv.math.Matrix33.prototype.equals = function (rhs, p) {
-  if (typeof p === 'undefined') {
-    p = Number.EPSILON;
+  get(row, col) {
+    return this.#values[row * 3 + col];
   }
 
-  return Math.abs(this.get(0, 0) - rhs.get(0, 0)) < p &&
-    Math.abs(this.get(0, 1) - rhs.get(0, 1)) < p &&
-    Math.abs(this.get(0, 2) - rhs.get(0, 2)) < p &&
-    Math.abs(this.get(1, 0) - rhs.get(1, 0)) < p &&
-    Math.abs(this.get(1, 1) - rhs.get(1, 1)) < p &&
-    Math.abs(this.get(1, 2) - rhs.get(1, 2)) < p &&
-    Math.abs(this.get(2, 0) - rhs.get(2, 0)) < p &&
-    Math.abs(this.get(2, 1) - rhs.get(2, 1)) < p &&
-    Math.abs(this.get(2, 2) - rhs.get(2, 2)) < p;
-};
+  /**
+   * Get the inverse of this matrix.
+   *
+   * @returns {Matrix33|undefined} The inverse matrix or undefined
+   *   if the determinant is zero.
+   */
+  getInverse() {
+    if (typeof this.#inverse === 'undefined') {
+      this.#inverse = getMatrixInverse(this);
+    }
+    return this.#inverse;
+  }
+
+  /**
+   * Check for Matrix33 equality.
+   *
+   * @param {Matrix33} rhs The other matrix to compare to.
+   * @returns {boolean} True if both matrices are equal.
+   */
+  equals(rhs) {
+    // TODO: add type check
+    // check values
+    for (let i = 0; i < 3; ++i) {
+      for (let j = 0; j < 3; ++j) {
+        if (this.get(i, j) !== rhs.get(i, j)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Check for Matrix33 similarity.
+   *
+   * @param {Matrix33} rhs The other matrix to compare to.
+   * @param {number} [tol] Optional number comparison tolerance,
+   *   defaults to Number.EPSILON.
+   * @returns {boolean} True if both matrices are similar.
+   */
+  isSimilar(rhs, tol) {
+    // TODO: add type check
+    // check values
+    for (let i = 0; i < 3; ++i) {
+      for (let j = 0; j < 3; ++j) {
+        if (!isSimilar(this.get(i, j), rhs.get(i, j), tol)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Get a string representation of the Matrix33.
+   *
+   * @returns {string} The matrix as a string.
+   */
+  toString() {
+    let str = '[';
+    for (let i = 0; i < 3; ++i) {
+      if (i !== 0) {
+        str += ', \n ';
+      }
+      for (let j = 0; j < 3; ++j) {
+        if (j !== 0) {
+          str += ', ';
+        }
+        str += this.get(i, j);
+      }
+    }
+    str += ']';
+    return str;
+  }
+
+  /**
+   * Multiply this matrix by another.
+   *
+   * @param {Matrix33} rhs The matrix to multiply by.
+   * @returns {Matrix33} The product matrix.
+   */
+  multiply(rhs) {
+    const values = [];
+    for (let i = 0; i < 3; ++i) {
+      for (let j = 0; j < 3; ++j) {
+        let tmp = 0;
+        for (let k = 0; k < 3; ++k) {
+          tmp += this.get(i, k) * rhs.get(k, j);
+        }
+        values.push(tmp);
+      }
+    }
+    return new Matrix33(values);
+  }
+
+  /**
+   * Get the absolute value of this matrix.
+   *
+   * @returns {Matrix33} The result matrix.
+   */
+  getAbs() {
+    const values = [];
+    for (let i = 0; i < 3; ++i) {
+      for (let j = 0; j < 3; ++j) {
+        values.push(Math.abs(this.get(i, j)));
+      }
+    }
+    return new Matrix33(values);
+  }
+
+  /**
+   * Multiply this matrix by a 3D array.
+   *
+   * @param {number[]} array3D The input 3D array.
+   * @returns {number[]} The result 3D array.
+   */
+  multiplyArray3D(array3D) {
+    if (array3D.length !== 3) {
+      throw new Error(`Cannot multiply 3x3 matrix with non 3D array: ${
+        array3D.length }`);
+    }
+    // (no loop for speedup)
+    const a0 = array3D[0];
+    const a1 = array3D[1];
+    const a2 = array3D[2];
+    const values = new Array(3);
+    values[0] =
+      this.#values[0] * a0 +
+      this.#values[1] * a1 +
+      this.#values[2] * a2;
+    values[1] =
+      this.#values[3] * a0 +
+      this.#values[4] * a1 +
+      this.#values[5] * a2;
+    values[2] =
+      this.#values[6] * a0 +
+      this.#values[7] * a1 +
+      this.#values[8] * a2;
+    return values;
+  }
+
+  /**
+   * Multiply this matrix by a 3D typed array.
+   *
+   * @param {TypedArray} sourceArray The input 3D array.
+   * @param {TypedArray} outArray The array to write to.
+   */
+  multiplyTypedArray3D(sourceArray, outArray) {
+    // (no loop for speedup)
+    const a0 = sourceArray[0];
+    const a1 = sourceArray[1];
+    const a2 = sourceArray[2];
+    outArray[0] =
+      this.#values[0] * a0 +
+      this.#values[1] * a1 +
+      this.#values[2] * a2;
+    outArray[1] =
+      this.#values[3] * a0 +
+      this.#values[4] * a1 +
+      this.#values[5] * a2;
+    outArray[2] =
+      this.#values[6] * a0 +
+      this.#values[7] * a1 +
+      this.#values[8] * a2;
+  }
+
+  /**
+   * Multiply this matrix by a 3D vector.
+   *
+   * @param {Vector3D} vector3D The input 3D vector.
+   * @returns {Vector3D} The result 3D vector.
+   */
+  multiplyVector3D(vector3D) {
+    const array3D = this.multiplyArray3D(
+      [vector3D.getX(), vector3D.getY(), vector3D.getZ()]
+    );
+    return new Vector3D(array3D[0], array3D[1], array3D[2]);
+  }
+
+  /**
+   * Multiply this matrix by a 3D point.
+   *
+   * @param {Point3D} point3D The input 3D point.
+   * @returns {Point3D} The result 3D point.
+   */
+  multiplyPoint3D(point3D) {
+    const array3D = this.multiplyArray3D(
+      [point3D.getX(), point3D.getY(), point3D.getZ()]
+    );
+    return new Point3D(array3D[0], array3D[1], array3D[2]);
+  }
+
+  /**
+   * Multiply this matrix by a 3D index.
+   *
+   * @param {Index} index3D The input 3D index.
+   * @returns {Index} The result 3D index.
+   */
+  multiplyIndex3D(index3D) {
+    const array3D = this.multiplyArray3D(index3D.getValues());
+    return new Index(array3D);
+  }
+
+  /**
+   * Get the index of the maximum in absolute value of a row.
+   *
+   * @param {number} row The row to get the maximum from.
+   * @returns {object} The {value,index} of the maximum.
+   */
+  getRowAbsMax(row) {
+    const values = [
+      Math.abs(this.get(row, 0)),
+      Math.abs(this.get(row, 1)),
+      Math.abs(this.get(row, 2))
+    ];
+    const absMax = Math.max.apply(null, values);
+    const index = values.indexOf(absMax);
+    return {
+      value: this.get(row, index),
+      index
+    };
+  }
+
+  /**
+   * Get the index of the maximum in absolute value of a column.
+   *
+   * @param {number} col The column to get the maximum from.
+   * @returns {object} The {value,index} of the maximum.
+   */
+  getColAbsMax(col) {
+    const values = [
+      Math.abs(this.get(0, col)),
+      Math.abs(this.get(1, col)),
+      Math.abs(this.get(2, col))
+    ];
+    const absMax = Math.max.apply(null, values);
+    const index = values.indexOf(absMax);
+    return {
+      value: this.get(index, col),
+      index
+    };
+  }
+
+  /**
+   * Get this matrix with only zero and +/- ones instead of the maximum.
+   *
+   * @returns {Matrix33} The simplified matrix.
+   */
+  asOneAndZeros() {
+    // TODO: This breaks at 45 degree angles
+    const res = [];
+    for (let j = 0; j < 3; ++j) {
+      const max = this.getRowAbsMax(j);
+      const sign = max.value > 0 ? 1 : -1;
+      for (let i = 0; i < 3; ++i) {
+        if (i === max.index) {
+          res.push(sign);
+        } else {
+          res.push(0);
+        }
+      }
+    }
+    return new Matrix33(res);
+  }
+
+  /**
+   * Get the third column direction index of an orientation matrix.
+   *
+   * @returns {number} The index of the absolute maximum of the last column.
+   */
+  getThirdColMajorDirection() {
+    return this.getColAbsMax(2).index;
+  }
+
+  /**
+   * Get the values of the matrix as an array.
+   *
+   * @returns {number[]} The matrix.
+   */
+  getValues() {
+    return this.#values.slice();
+  }
+
+} // Matrix33
 
 /**
- * Get a string representation of the Matrix33.
+ * Get the inverse of an input 3*3 matrix.
  *
- * @returns {string} The matrix as a string.
+ * Ref:
+ * - {@link https://en.wikipedia.org/wiki/Invertible_matrix#Inversion_of_3_%C3%97_3_matrices},
+ * - {@link https://github.com/willnode/N-Matrix-Programmer}.
+ *
+ * @param {Matrix33} m The input matrix.
+ * @returns {Matrix33|undefined} The inverse matrix or undefined
+ *   if the determinant is zero.
  */
-dwv.math.Matrix33.prototype.toString = function () {
-  return '[' + this.get(0, 0) + ', ' + this.get(0, 1) + ', ' + this.get(0, 2) +
-    '\n ' + this.get(1, 0) + ', ' + this.get(1, 1) + ', ' + this.get(1, 2) +
-    '\n ' + this.get(2, 0) + ', ' + this.get(2, 1) + ', ' + this.get(2, 2) +
-    ']';
-};
+function getMatrixInverse(m) {
+  const m00 = m.get(0, 0);
+  const m01 = m.get(0, 1);
+  const m02 = m.get(0, 2);
+  const m10 = m.get(1, 0);
+  const m11 = m.get(1, 1);
+  const m12 = m.get(1, 2);
+  const m20 = m.get(2, 0);
+  const m21 = m.get(2, 1);
+  const m22 = m.get(2, 2);
 
-/**
- * Multiply this matrix by a 3D vector.
- *
- * @param {object} vector3D The input 3D vector
- * @returns {object} The result 3D vector
- */
-dwv.math.Matrix33.multiplyVector3D = function (vector3D) {
-  // cache matrix values
-  var m00 = this.get(0, 0); var m01 = this.get(0, 1); var m02 = this.get(0, 2);
-  var m10 = this.get(1, 0); var m11 = this.get(1, 1); var m12 = this.get(1, 2);
-  var m20 = this.get(2, 0); var m21 = this.get(2, 1); var m22 = this.get(2, 2);
-  // cache vector values
-  var vx = vector3D.getX();
-  var vy = vector3D.getY();
-  var vz = vector3D.getZ();
-  // calculate
-  return new dwv.math.Vector3D(
-    (m00 * vx) + (m01 * vy) + (m02 * vz),
-    (m10 * vx) + (m11 * vy) + (m12 * vz),
-    (m20 * vx) + (m21 * vy) + (m22 * vz));
-};
+  const a1212 = m11 * m22 - m12 * m21;
+  const a2012 = m12 * m20 - m10 * m22;
+  const a0112 = m10 * m21 - m11 * m20;
+
+  let det = m00 * a1212 + m01 * a2012 + m02 * a0112;
+  if (det === 0) {
+    logger.warn('Cannot invert 3*3 matrix with zero determinant.');
+    return undefined;
+  }
+  det = 1 / det;
+
+  const values = [
+    det * a1212,
+    det * (m02 * m21 - m01 * m22),
+    det * (m01 * m12 - m02 * m11),
+    det * a2012,
+    det * (m00 * m22 - m02 * m20),
+    det * (m02 * m10 - m00 * m12),
+    det * a0112,
+    det * (m01 * m20 - m00 * m21),
+    det * (m00 * m11 - m01 * m10)
+  ];
+
+  return new Matrix33(values);
+}
 
 /**
  * Create a 3x3 identity matrix.
  *
- * @returns {object} The identity matrix.
+ * @returns {Matrix33} The identity matrix.
  */
-dwv.math.getIdentityMat33 = function () {
-  return new dwv.math.Matrix33(
+export function getIdentityMat33() {
+  /* eslint-disable @stylistic/js/array-element-newline */
+  return new Matrix33([
     1, 0, 0,
     0, 1, 0,
-    0, 0, 1);
-};
+    0, 0, 1
+  ]);
+  /* eslint-enable @stylistic/js/array-element-newline */
+}
+
+/**
+ * Check if a matrix is a 3x3 identity matrix.
+ *
+ * @param {Matrix33} mat33 The matrix to test.
+ * @returns {boolean} True if identity.
+ */
+export function isIdentityMat33(mat33) {
+  return mat33.equals(getIdentityMat33());
+}

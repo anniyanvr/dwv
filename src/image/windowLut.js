@@ -1,149 +1,132 @@
-// namespaces
-var dwv = dwv || {};
-dwv.image = dwv.image || {};
+/**
+ * @import {ModalityLut} from './modalityLut.js';
+ * @import {VoiLut} from './voiLut.js';
+ */
 
 /**
- * Window LUT class.
- * Typically converts from float to integer.
- *
- * @class
- * @param {number} rescaleLut The associated rescale LUT.
- * @param {boolean} isSigned Flag to know if the data is signed or not.
+ * Window LUT class: combines a modality LUT and a VOI LUT.
  */
-dwv.image.WindowLut = function (rescaleLut, isSigned) {
+export class WindowLut {
+
   /**
-   * The internal array: Uint8ClampedArray clamps between 0 and 255.
+   * The modality LUT.
    *
-   * @private
+   * @type {ModalityLut}
+   */
+  #modalityLut;
+
+  /**
+   * The VOI LUT.
+   *
+   * @type {VoiLut}
+   */
+  #voiLut;
+
+  /**
+   * The internal LUT array: Uint8ClampedArray clamps between 0 and 255.
+   *
    * @type {Uint8ClampedArray}
    */
-  var lut = null;
-
-  /**
-   * The window level.
-   *
-   * @private
-   * @type {object}
-   */
-  var windowLevel = null;
-
-  /**
-   * Flag to know if the lut is ready or not.
-   *
-   * @private
-   * @type {boolean}
-   */
-  var isReady = false;
+  #lut;
 
   /**
    * Shift for signed data.
    *
-   * @private
    * @type {number}
    */
-  var signedShift = 0;
+  #signedShift = 0;
 
   /**
-   * Get the window / level.
+   * Is the RSI discrete.
    *
-   * @returns {object} The window / level.
+   * @type {boolean}
    */
-  this.getWindowLevel = function () {
-    return windowLevel;
-  };
-  /**
-   * Get the signed flag.
-   *
-   * @returns {boolean} The signed flag.
-   */
-  this.isSigned = function () {
-    return isSigned;
-  };
-  /**
-   * Get the rescale lut.
-   *
-   * @returns {object} The rescale lut.
-   */
-  this.getRescaleLut = function () {
-    return rescaleLut;
-  };
+  #isDiscrete = true;
 
   /**
-   * Is the lut ready to use or not? If not, the user must
-   * call 'update'.
+   * Construct a window LUT object, VOI LUT is set with
+   *   the 'setVoiLut' method.
    *
-   * @returns {boolean} True if the lut is ready to use.
+   * @param {ModalityLut} modalityLut The associated rescale LUT.
+   * @param {boolean} isSigned Flag to know if the data is signed or not.
+   * @param {boolean} isDiscrete Flag to know if the input data is discrete.
    */
-  this.isReady = function () {
-    return isReady;
-  };
+  constructor(modalityLut, isSigned, isDiscrete) {
+    this.#modalityLut = modalityLut;
+
+    if (isDiscrete &&
+      typeof this.#modalityLut.getLength() === 'undefined') {
+      throw new Error('Cannot create window LUT without LUT length');
+    }
+
+    // signed shift is only needed to index a LUT
+    const size = this.#modalityLut.getLength();
+    if (isSigned && typeof size !== 'undefined') {
+      this.#signedShift = size / 2;
+    } else {
+      this.#signedShift = 0;
+    }
+
+    this.#isDiscrete = isDiscrete;
+  }
 
   /**
-   * Set the window center and width.
+   * Get the VOI LUT.
    *
-   * @param {object} wl The window level.
+   * @returns {VoiLut} The VOI LUT.
    */
-  this.setWindowLevel = function (wl) {
+  getVoiLut() {
+    return this.#voiLut;
+  }
+
+  /**
+   * Get the modality LUT.
+   *
+   * @returns {ModalityLut} The modality LUT.
+   */
+  getModalityLut() {
+    return this.#modalityLut;
+  }
+
+  /**
+   * Set the VOI LUT.
+   *
+   * @param {VoiLut} lut The VOI LUT.
+   */
+  setVoiLut(lut) {
     // store the window values
-    windowLevel = wl;
-    // possible signed shift
-    signedShift = 0;
-    windowLevel.setSignedOffset(0);
-    if (isSigned) {
-      var size = rescaleLut.getLength();
-      signedShift = size / 2;
-      windowLevel.setSignedOffset(rescaleLut.getRSI().getSlope() * signedShift);
-    }
-    // update ready flag
-    isReady = false;
-  };
+    this.#voiLut = lut;
 
-  /**
-   * Update the lut if needed..
-   */
-  this.update = function () {
-    // check if we need to update
-    if (isReady) {
-      return;
-    }
+    // possible signed shift (LUT indices are positive)
+    this.#voiLut.setSignedOffset(
+      this.#modalityLut.getRSI().getSlope() * this.#signedShift);
 
-    // check rescale lut
-    if (!rescaleLut.isReady()) {
-      rescaleLut.initialise();
-    }
-    // create window lut
-    var size = rescaleLut.getLength();
-    if (!lut) {
+    // create lut if not continous
+    if (this.#isDiscrete) {
+      const size = this.#modalityLut.getLength();
       // use clamped array (polyfilled in env.js)
-      lut = new Uint8ClampedArray(size);
+      this.#lut = new Uint8ClampedArray(size);
+      // by default WindowLevel returns a value in the [0,255] range
+      // this is ok with regular Arrays and ClampedArray.
+      for (let i = 0; i < size; ++i) {
+        this.#lut[i] = this.#voiLut.apply(this.#modalityLut.getValue(i));
+      }
     }
-    // by default WindowLevel returns a value in the [0,255] range
-    // this is ok with regular Arrays and ClampedArray.
-    for (var i = 0; i < size; ++i) {
-      lut[i] = windowLevel.apply(rescaleLut.getValue(i));
-    }
-
-    // update ready flag
-    isReady = true;
-  };
-
-  /**
-   * Get the length of the LUT array.
-   *
-   * @returns {number} The length of the LUT array.
-   */
-  this.getLength = function () {
-    return lut.length;
-  };
+  }
 
   /**
    * Get the value of the LUT at the given offset.
    *
-   * @param {number} offset The input offset in [0,2^bitsStored] range.
+   * @param {number} offset The input offset in [0,2^bitsStored] range
+   *   for discrete data or full range for non discrete.
    * @returns {number} The integer value (default [0,255]) of the LUT
    *   at the given offset.
    */
-  this.getValue = function (offset) {
-    return lut[offset + signedShift];
-  };
-};
+  getValue(offset) {
+    if (this.#isDiscrete) {
+      return this.#lut[offset + this.#signedShift];
+    }
+    return Math.floor(this.#voiLut.apply(offset + this.#signedShift));
+  }
+
+} // class WindowLut

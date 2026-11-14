@@ -1,195 +1,404 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
+import {Point2D} from './point.js';
+import {
+  isSimilar,
+  REAL_WORLD_EPSILON,
+} from './number.js';
+
+/**
+ * @import {ViewController} from '../app/viewController.js';
+ * @import {Scalar2D} from './scalar.js';
+ * @import {NumberValue} from './types.js';
+ */
 
 /**
  * Line shape.
- *
- * @class
- * @param {object} begin A Point2D representing the beginning of the line.
- * @param {object} end A Point2D representing the end of the line.
  */
-dwv.math.Line = function (begin, end) {
+export class Line {
+
+  /**
+   * Line begin point.
+   *
+   * @type {Point2D}
+   */
+  #begin;
+
+  /**
+   * Line end point.
+   *
+   * @type {Point2D}
+   */
+  #end;
+
+  /**
+   * @param {Point2D} begin A Point2D representing the beginning
+   *   of the line.
+   * @param {Point2D} end A Point2D representing the end of the line.
+   */
+  constructor(begin, end) {
+    this.#begin = begin;
+    this.#end = end;
+  }
+
   /**
    * Get the begin point of the line.
    *
-   * @returns {object} The beginning point of the line.
+   * @returns {Point2D} The beginning point of the line.
    */
-  this.getBegin = function () {
-    return begin;
-  };
+  getBegin() {
+    return this.#begin;
+  }
 
   /**
    * Get the end point of the line.
    *
-   * @returns {object} The ending point of the line.
+   * @returns {Point2D} The ending point of the line.
    */
-  this.getEnd = function () {
-    return end;
-  };
-}; // Line class
-
-/**
- * Check for equality.
- *
- * @param {object} rhs The object to compare to.
- * @returns {boolean} True if both objects are equal.
- */
-dwv.math.Line.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getBegin().equals(rhs.getBegin()) &&
-    this.getEnd().equals(rhs.getEnd());
-};
-
-/**
- * Get the line delta in the X direction.
- *
- * @returns {number} The delta in the X direction.
- */
-dwv.math.Line.prototype.getDeltaX = function () {
-  return this.getEnd().getX() - this.getBegin().getX();
-};
-
-/**
- * Get the line delta in the Y direction.
- *
- * @returns {number} The delta in the Y direction.
- */
-dwv.math.Line.prototype.getDeltaY = function () {
-  return this.getEnd().getY() - this.getBegin().getY();
-};
-
-/**
- * Get the length of the line.
- *
- * @returns {number} The length of the line.
- */
-dwv.math.Line.prototype.getLength = function () {
-  return Math.sqrt(
-    this.getDeltaX() * this.getDeltaX() +
-    this.getDeltaY() * this.getDeltaY()
-  );
-};
-
-/**
- * Get the length of the line according to a  spacing.
- *
- * @param {number} spacingX The X spacing.
- * @param {number} spacingY The Y spacing.
- * @returns {number} The length of the line with spacing
- *  or null for null spacings.
- */
-dwv.math.Line.prototype.getWorldLength = function (spacingX, spacingY) {
-  var wlen = null;
-  if (spacingX !== null && spacingY !== null) {
-    var dxs = this.getDeltaX() * spacingX;
-    var dys = this.getDeltaY() * spacingY;
-    wlen = Math.sqrt(dxs * dxs + dys * dys);
+  getEnd() {
+    return this.#end;
   }
-  return wlen;
-};
 
-/**
- * Get the mid point of the line.
- *
- * @returns {object} The mid point of the line.
- */
-dwv.math.Line.prototype.getMidpoint = function () {
-  return new dwv.math.Point2D(
-    parseInt((this.getBegin().getX() + this.getEnd().getX()) / 2, 10),
-    parseInt((this.getBegin().getY() + this.getEnd().getY()) / 2, 10)
-  );
-};
+  /**
+   * Check for equality.
+   *
+   * @param {Line} rhs The object to compare to.
+   * @returns {boolean} True if both objects are equal.
+   */
+  equals(rhs) {
+    return rhs !== null &&
+      this.getBegin().equals(rhs.getBegin()) &&
+      this.getEnd().equals(rhs.getEnd());
+  }
 
-/**
- * Get the slope of the line.
- *
- * @returns {number} The slope of the line.
- */
-dwv.math.Line.prototype.getSlope = function () {
-  return this.getDeltaY() / this.getDeltaX();
-};
+  /**
+   * Get the line delta in the X direction.
+   *
+   * @returns {number} The delta in the X direction.
+   */
+  getDeltaX() {
+    return this.getEnd().getX() - this.getBegin().getX();
+  }
 
-/**
- * Get the intercept of the line.
- *
- * @returns {number} The slope of the line.
- */
-dwv.math.Line.prototype.getIntercept = function () {
-  return (
-    this.getEnd().getX() * this.getBegin().getY() -
-    this.getBegin().getX() * this.getEnd().getY()
-  ) / this.getDeltaX();
-};
+  /**
+   * Get the line delta in the Y direction.
+   *
+   * @returns {number} The delta in the Y direction.
+   */
+  getDeltaY() {
+    return this.getEnd().getY() - this.getBegin().getY();
+  }
 
-/**
- * Get the inclination of the line.
- *
- * @returns {number} The inclination of the line.
- */
-dwv.math.Line.prototype.getInclination = function () {
-  // tan(theta) = slope
-  var angle = Math.atan2(this.getDeltaY(), this.getDeltaX()) * 180 / Math.PI;
-  // shift?
-  return 180 - angle;
-};
+  /**
+   * Get the length of the line.
+   *
+   * @returns {number} The length of the line.
+   */
+  getLength() {
+    return Math.sqrt(
+      this.getDeltaX() * this.getDeltaX() +
+      this.getDeltaY() * this.getDeltaY()
+    );
+  }
+
+  /**
+   * Get the length of the line according to a  spacing.
+   *
+   * @param {Scalar2D} spacing2D The 2D spacing.
+   * @returns {number} The length of the line with spacing
+   *  or null for null spacings.
+   */
+  getWorldLength(spacing2D) {
+    let wlen = null;
+    if (spacing2D !== null) {
+      const dxs = this.getDeltaX() * spacing2D.x;
+      const dys = this.getDeltaY() * spacing2D.y;
+      wlen = Math.sqrt(dxs * dxs + dys * dys);
+    }
+    return wlen;
+  }
+
+  /**
+   * Get the mid point of the line.
+   *
+   * @returns {Point2D} The mid point of the line.
+   * @deprecated Since v0.36, please use getCentroid instead.
+   */
+  getMidpoint() {
+    return this.getCentroid();
+  }
+
+  /**
+   * Get the centroid of the line.
+   *
+   * @returns {Point2D} THe centroid point.
+   */
+  getCentroid() {
+    return new Point2D(
+      (this.getBegin().getX() + this.getEnd().getX()) / 2,
+      (this.getBegin().getY() + this.getEnd().getY()) / 2
+    );
+  }
+
+  /**
+   * Check if a point is on the line, within a tolerance.
+   *
+   * @param {Point2D} point The point to check.
+   * @param {number} [tolerance] Optional maximum distance to the line,
+   *   defaults to 0.
+   * @returns {boolean} True if the point is on the line.
+   */
+  contains(point, tolerance = 0) {
+    return getDistanceToSegment(
+      point, this.getBegin(), this.getEnd()) <= tolerance;
+  }
+
+  /**
+   * Get the slope of the line.
+   *
+   * @returns {number} The slope of the line.
+   */
+  getSlope() {
+    return this.getDeltaY() / this.getDeltaX();
+  }
+
+  /**
+   * Get the intercept of the line.
+   *
+   * @returns {number} The slope of the line.
+   */
+  getIntercept() {
+    return (
+      this.getEnd().getX() * this.getBegin().getY() -
+      this.getBegin().getX() * this.getEnd().getY()
+    ) / this.getDeltaX();
+  }
+
+  /**
+   * Get the inclination of the line.
+   *
+   * @returns {number} The inclination of the line.
+   */
+  getInclination() {
+    // tan(theta) = slope
+    const angle =
+      Math.atan2(this.getDeltaY(), this.getDeltaX()) * 180 / Math.PI;
+    // shift?
+    return 180 - angle;
+  }
+
+  /**
+   * Get a new line with the start and end flipped.
+   *
+   * @returns {Line} The new flipped line.
+   */
+  getFlipped() {
+    return new Line(this.#end, this.#begin);
+  }
+
+  /**
+   * Quantify a line according to view information.
+   *
+   * @param {ViewController} viewController The associated view controller.
+   * @returns {Record<string, NumberValue>} A quantification object.
+   */
+  quantify(viewController) {
+    // length
+    const spacing2D = viewController.get2DSpacing();
+    const worldLength = this.getWorldLength(spacing2D);
+    let length;
+    if (worldLength !== null) {
+      length = {
+        value: worldLength,
+        unit: viewController.getLengthUnit()
+      };
+    }
+    // return
+    return {length};
+  }
+
+} // Line class
 
 /**
  * Get the angle between two lines in degree.
  *
- * @param {object} line0 The first line.
- * @param {object} line1 The second line.
+ * @param {Line} line0 The first line.
+ * @param {Line} line1 The second line.
  * @returns {number} The angle.
  */
-dwv.math.getAngle = function (line0, line1) {
-  var dx0 = line0.getDeltaX();
-  var dy0 = line0.getDeltaY();
-  var dx1 = line1.getDeltaX();
-  var dy1 = line1.getDeltaY();
+export function getAngle(line0, line1) {
+  const dx0 = line0.getDeltaX();
+  const dy0 = line0.getDeltaY();
+  const dx1 = line1.getDeltaX();
+  const dy1 = line1.getDeltaY();
   // dot = ||a||*||b||*cos(theta)
-  var dot = dx0 * dx1 + dy0 * dy1;
+  const dot = dx0 * dx1 + dy0 * dy1;
   // cross = ||a||*||b||*sin(theta)
-  var det = dx0 * dy1 - dy0 * dx1;
+  const det = dx0 * dy1 - dy0 * dx1;
   // tan = sin / cos
-  var angle = Math.atan2(det, dot) * 180 / Math.PI;
+  const angle = Math.atan2(det, dot) * 180 / Math.PI;
   // complementary angle
   // shift?
   return 360 - (180 - angle);
-};
+}
 
 /**
- * Get a perpendicular line to an input one.
+ * Check if two lines are orthogonal.
  *
- * @param {object} line The line to be perpendicular to.
- * @param {object} point The middle point of the perpendicular line.
- * @param {number} length The length of the perpendicular line.
- * @returns {object} A perpendicular line.
+ * @param {Line} line0 The first line.
+ * @param {Line} line1 The second line.
+ * @returns {boolean} True if both lines are orthogonal.
  */
-dwv.math.getPerpendicularLine = function (line, point, length) {
+export function areOrthogonal(line0, line1) {
+  const dx0 = line0.getDeltaX();
+  const dy0 = line0.getDeltaY();
+  const dx1 = line1.getDeltaX();
+  const dy1 = line1.getDeltaY();
+  // dot = ||a||*||b||*cos(theta)
+  return (dx0 * dx1 + dy0 * dy1) === 0;
+}
+
+/**
+ * Check if a point is in a line coordinate range.
+ *
+ * @param {Point2D} point The input point.
+ * @param {Line} line The input line.
+ * @returns {boolean} True if the input point is in the line coordinate range.
+ */
+export function isPointInLineRange(point, line) {
+  const minX = Math.min(line.getBegin().getX(), line.getEnd().getX());
+  const maxX = Math.max(line.getBegin().getX(), line.getEnd().getX());
+  const minY = Math.min(line.getBegin().getY(), line.getEnd().getY());
+  const maxY = Math.max(line.getBegin().getY(), line.getEnd().getY());
+  return point.getX() >= minX &&
+    point.getX() <= maxX &&
+    point.getY() >= minY &&
+    point.getY() <= maxY;
+}
+
+/**
+ * Get the distance between a point and a line segment.
+ *
+ * @param {Point2D} point The input point.
+ * @param {Point2D} begin The segment begin point.
+ * @param {Point2D} end The segment end point.
+ * @returns {number} The distance to the closest point of the segment.
+ */
+export function getDistanceToSegment(point, begin, end) {
+  const dx = end.getX() - begin.getX();
+  const dy = end.getY() - begin.getY();
+  const length2 = dx * dx + dy * dy;
+  // projection of the point on the segment, clamped to [0, 1]
+  let t = 0;
+  if (length2 !== 0) {
+    t = ((point.getX() - begin.getX()) * dx +
+      (point.getY() - begin.getY()) * dy) / length2;
+    t = Math.max(0, Math.min(1, t));
+  }
+  return Math.hypot(
+    point.getX() - (begin.getX() + t * dx),
+    point.getY() - (begin.getY() + t * dy)
+  );
+}
+
+/**
+ * Get a perpendicular line to an input one at a given point.
+ *
+ * @param {Line} line The line to be perpendicular to.
+ * @param {Point2D} point The middle point of the perpendicular line.
+ * @param {number} length The length of the perpendicular line.
+ * @param {Scalar2D} [spacing] Optional image spacing, default to [1,1].
+ * @returns {Line} The perpendicular line.
+ */
+export function getPerpendicularLine(line, point, length, spacing) {
+  if (typeof spacing === 'undefined') {
+    spacing = {x: 1, y: 1};
+  }
+  const sx2 = spacing.x * spacing.x;
+  const sy2 = spacing.y * spacing.y;
+  // a0 * a1 = -1 (in square space)
+  const perpSlope = -sx2 / (sy2 * line.getSlope());
+  // y0 = a1*x0 + b1 -> b1 = y0 - a1*x0
+  const prepIntercept = point.getY() - perpSlope * point.getX();
+  // return
+  return getLineFromEquation(perpSlope, prepIntercept, point, length, spacing);
+}
+
+/**
+ * Get a perpendicular line to an input one at a given distance
+ *   of its begin point.
+ *
+ * @param {Line} line The line to be perpendicular to.
+ * @param {number} distance The distance to the input line begin point.
+ * @param {number} length The length of the perpendicular line.
+ * @param {Scalar2D} [spacing] Optional image spacing, default to [1,1].
+ * @returns {Line} The perpendicular line.
+ */
+export function getPerpendicularLineAtDistance(
+  line, distance, length, spacing) {
+  // get a line along the input one and centered on begin point
+  const lineFromEq = getLineFromEquation(
+    line.getSlope(),
+    line.getIntercept(),
+    line.getBegin(),
+    distance,
+    spacing
+  );
+  // select the point on the input line
+  let startPoint;
+  if (isPointInLineRange(lineFromEq.getBegin(), line)) {
+    startPoint = lineFromEq.getBegin();
+  } else {
+    startPoint = lineFromEq.getEnd();
+  }
+  // use it as base for a perpendicular line
+  return getPerpendicularLine(line, startPoint, length, spacing);
+}
+
+/**
+ * Get a line from an equation, a middle point and a length.
+ *
+ * @param {number} slope The line slope.
+ * @param {number} intercept The line intercept.
+ * @param {Point2D} point The middle point of the line.
+ * @param {number} length The line length.
+ * @param {Scalar2D} [spacing] Optional image spacing, default to [1,1].
+ * @returns {Line} The resulting line.
+ */
+export function getLineFromEquation(slope, intercept, point, length, spacing) {
+  if (typeof spacing === 'undefined') {
+    spacing = {x: 1, y: 1};
+  }
   // begin point
-  var beginX = 0;
-  var beginY = 0;
+  let beginX;
+  let beginY;
   // end point
-  var endX = 0;
-  var endY = 0;
+  let endX;
+  let endY;
 
-  // check slope:
-  // 0 -> horizontal
-  // Infinite -> vertical (a/Infinite = 0)
-  if (line.getSlope() !== 0) {
-    // a0 * a1 = -1
-    var slope = -1 / line.getSlope();
-    // y0 = a1*x0 + b1 -> b1 = y0 - a1*x0
-    var intercept = point.getY() - slope * point.getX();
+  if (isSimilar(slope, 0, REAL_WORLD_EPSILON)) {
+    // slope = ~0 -> horizontal input line
+    beginX = point.getX() - length / (2 * spacing.x);
+    beginY = point.getY();
+    endX = point.getX() + length / (2 * spacing.x);
+    endY = point.getY();
+  } else if (Math.abs(slope) > 1e6) {
+    // slope = ~(+/-)Infinity -> vertical input line
+    beginX = point.getX();
+    beginY = point.getY() - length / (2 * spacing.y);
+    endX = point.getX();
+    endY = point.getY() + length / (2 * spacing.y);
+  } else {
+    const sx2 = spacing.x * spacing.x;
+    const sy2 = spacing.y * spacing.y;
 
-    // 1. (x - x0)^2 + (y - y0)^2 = d^2
-    // 2. a = (y - y0) / (x - x0) -> y = a*(x - x0) + y0
-    // ->  (x - x0)^2 + m^2 * (x - x0)^2 = d^2
-    // -> x = x0 +- d / sqrt(1+m^2)
+    // 1. [length] sx^2 * (x - x0)^2 + sy^2 * (y - y0)^2 = d^2
+    // 2. [slope] a = (y - y0) / (x - x0) -> y - y0 = a*(x - x0)
+    // ->  sx^2 * (x - x0)^2 + sy^2 * a^2 * (x - x0)^2 = d^2
+    // ->  (x - x0)^2 = d^2 / (sx^2 + sy^2 * a^2)
+    // -> x = x0 +- d / sqrt(sx^2 + sy^2 * a^2)
 
     // length is the distance between begin and end,
     // point is half way between both -> d = length / 2
-    var dx = length / (2 * Math.sqrt(1 + slope * slope));
+    const dx = length / (2 * Math.sqrt(sx2 + sy2 * slope * slope));
 
     // begin point
     beginX = point.getX() - dx;
@@ -197,35 +406,8 @@ dwv.math.getPerpendicularLine = function (line, point, length) {
     // end point
     endX = point.getX() + dx;
     endY = slope * endX + intercept;
-  } else {
-    // horizontal input line -> perpendicular is vertical!
-    // begin point
-    beginX = point.getX();
-    beginY = point.getY() - length / 2;
-    // end point
-    endX = point.getX();
-    endY = point.getY() + length / 2;
   }
-  // perpendicalar line
-  return new dwv.math.Line(
-    new dwv.math.Point2D(beginX, beginY),
-    new dwv.math.Point2D(endX, endY));
-};
-
-/**
- * Quantify a line according to view information.
- *
- * @param {object} viewController The associated view controller.
- * @returns {object} A quantification object.
- */
-dwv.math.Line.prototype.quantify = function (viewController) {
-  var quant = {};
-  // length
-  var spacing = viewController.get2DSpacing();
-  var length = this.getWorldLength(spacing[0], spacing[1]);
-  if (length !== null) {
-    quant.length = {value: length, unit: dwv.i18n('unit.mm')};
-  }
-  // return
-  return quant;
-};
+  return new Line(
+    new Point2D(beginX, beginY),
+    new Point2D(endX, endY));
+}

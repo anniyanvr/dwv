@@ -1,177 +1,98 @@
-// namespaces
-var dwv = dwv || {};
-dwv.image = dwv.image || {};
+import {VoiLutFunctionNames} from './voiLut.js';
 
 /**
- * WindowLevel class.
- * <br>Pseudo-code:
- * <pre>
- *  if (x <= c - 0.5 - (w-1)/2), then y = ymin
- *  else if (x > c - 0.5 + (w-1)/2), then y = ymax,
- *  else y = ((x - (c - 0.5)) / (w-1) + 0.5) * (ymax - ymin) + ymin
- * </pre>
- *
- * @param {number} center The window center.
- * @param {number} width The window width.
- * @class
- * @see DICOM doc for [Window Center and Window Width]{@link http://dicom.nema.org/dicom/2013/output/chtml/part03/sect_C.11.html#sect_C.11.2.1.2}
- *
+ * Window and Level also known as window width and center.
  */
-dwv.image.WindowLevel = function (center, width) {
-  // avoid zero width
-  if (width === 0) {
-    throw new Error('A window level with a width of zero is not possible.');
+export class WindowLevel {
+  /**
+   * The window center.
+   *
+   * @type {number}
+   */
+  center;
+
+  /**
+   * The window width.
+   *
+   * @type {number}
+   */
+  width;
+
+  /**
+   * @param {number} center The window center.
+   * @param {number} width The window width.
+   */
+  constructor(center, width) {
+    this.center = center;
+    this.width = width;
   }
 
-  /**
-   * Signed data offset. Defaults to 0.
-   *
-   * @private
-   * @type {number}
-   */
-  var signedOffset = 0;
-  /**
-   * Output value minimum. Defaults to 0.
-   *
-   * @private
-   * @type {number}
-   */
-  var ymin = 0;
-  /**
-   * Output value maximum. Defaults to 255.
-   *
-   * @private
-   * @type {number}
-   */
-  var ymax = 255;
-
-  /**
-   * Input value minimum (calculated).
-   *
-   * @private
-   * @type {number}
-   */
-  var xmin = null;
-  /**
-   * Input value maximum (calculated).
-   *
-   * @private
-   * @type {number}
-   */
-  var xmax = null;
-  /**
-   * Window level equation slope (calculated).
-   *
-   * @private
-   * @type {number}
-   */
-  var slope = null;
-  /**
-   * Window level equation intercept (calculated).
-   *
-   * @private
-   * @type {number}
-   */
-  var inter = null;
-
-  /**
-   * Initialise members. Called at construction.
-   *
-   * @private
-   */
-  function init() {
-    var c = center + signedOffset;
-    // from the standard
-    xmin = c - 0.5 - ((width - 1) / 2);
-    xmax = c - 0.5 + ((width - 1) / 2);
-    // develop the equation:
-    // y = ( ( x - (c - 0.5) ) / (w-1) + 0.5 ) * (ymax - ymin) + ymin
-    // y = ( x / (w-1) ) * (ymax - ymin) +
-    //     ( -(c - 0.5) / (w-1) + 0.5 ) * (ymax - ymin) + ymin
-    slope = (ymax - ymin) / (width - 1);
-    inter = (-(c - 0.5) / (width - 1) + 0.5) * (ymax - ymin) + ymin;
-  }
-
-  // call init
-  init();
-
-  /**
-   * Get the window center.
-   *
-   * @returns {number} The window center.
-   */
-  this.getCenter = function () {
-    return center;
-  };
-  /**
-   * Get the window width.
-   *
-   * @returns {number} The window width.
-   */
-  this.getWidth = function () {
-    return width;
-  };
-
-  /**
-   * Set the output value range.
-   *
-   * @param {number} min The output value minimum.
-   * @param {number} max The output value maximum.
-   */
-  this.setRange = function (min, max) {
-    ymin = parseInt(min, 10);
-    ymax = parseInt(max, 10);
-    // re-initialise
-    init();
-  };
-  /**
-   * Set the signed offset.
-   *
-   * @param {number} offset The signed data offset,
-   *   typically: slope * ( size / 2).
-   */
-  this.setSignedOffset = function (offset) {
-    signedOffset = offset;
-    // re-initialise
-    init();
-  };
-
-  /**
-   * Apply the window level on an input value.
-   *
-   * @param {number} value The value to rescale as an integer.
-   * @returns {number} The leveled value, in the
-   *  [ymin, ymax] range (default [0,255]).
-   */
-  this.apply = function (value) {
-    if (value <= xmin) {
-      return ymin;
-    } else if (value > xmax) {
-      return ymax;
-    } else {
-      return parseInt(((value * slope) + inter), 10);
-    }
-  };
-
-};
+} // WindowLevel class
 
 /**
  * Check for window level equality.
  *
- * @param {object} rhs The other window level to compare to.
- * @returns {boolean} True if both window level are equal.
+ * @param {WindowLevel} wl0 The first window level.
+ * @param {WindowLevel} wl1 The second window level.
+ * @returns {boolean} True if both objects are equal.
  */
-dwv.image.WindowLevel.prototype.equals = function (rhs) {
-  return rhs !== null &&
-        this.getCenter() === rhs.getCenter() &&
-        this.getWidth() === rhs.getWidth();
-};
+export function equalWl(wl0, wl1) {
+  return wl0 !== null &&
+    typeof wl0 !== 'undefined' &&
+    wl1 !== null &&
+    typeof wl1 !== 'undefined' &&
+    wl0.center === wl1.center &&
+    wl0.width === wl1.width;
+}
 
 /**
- * Get a string representation of the window level.
+ * Get the minimum window width allowed by a VOI LUT function:
+ * LINEAR requires a width of at least 1, LINEAR_EXACT and SIGMOID
+ * require a strictly positive width (the epsilon avoids a division
+ * by zero).
  *
- * @returns {string} The window level as a string.
+ * Ref: {@link https://dicom.nema.org/medical/dicom/2024a/output/chtml/part03/sect_C.11.2.html#sect_C.11.2.1}.
+ *
+ * @param {string} [voiLutFunctionName] The VOI LUT function name,
+ *   defaults to 'LINEAR'.
+ * @returns {number} The minimum window width.
  */
-dwv.image.WindowLevel.prototype.toString = function () {
-  return (this.getCenter() + ', ' + this.getWidth());
-};
+export function getMinWindowWidth(voiLutFunctionName) {
+  let minWindowWidth = 1;
+  if (voiLutFunctionName === VoiLutFunctionNames.linear_exact ||
+    voiLutFunctionName === VoiLutFunctionNames.sigmoid) {
+    minWindowWidth = Number.EPSILON;
+  }
+  return minWindowWidth;
+}
+
+/**
+ * Validate and constrain an input window level.
+ *
+ * @param {WindowLevel} wl The window level to validate.
+ * @param {object} range The image pixel data range.
+ * @param {string} [voiLutFunctionName] The VOI LUT function name,
+ *   defaults to 'LINEAR'.
+ * @returns {WindowLevel|undefined} A valid window level.
+ */
+export function validateWindowLevel(
+  wl,
+  range,
+  voiLutFunctionName
+) {
+  if (typeof wl === 'undefined') {
+    return;
+  }
+
+  let centerBound = wl.center;
+  centerBound = Math.min(centerBound, range.max);
+  centerBound = Math.max(centerBound, range.min);
+
+  // apply the minimum after the range limit: the width minimum
+  // takes precedence for data with a small range
+  let widthBound = wl.width;
+  widthBound = Math.min(widthBound, range.max - range.min);
+  widthBound = Math.max(widthBound, getMinWindowWidth(voiLutFunctionName));
+
+  return new WindowLevel(centerBound, widthBound);
+}

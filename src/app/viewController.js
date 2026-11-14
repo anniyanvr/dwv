@@ -1,364 +1,1028 @@
-// namespaces
-var dwv = dwv || {};
+import {Index} from '../math/index.js';
+import {Vector3D} from '../math/vector.js';
+import {Point2D} from '../math/point.js';
+import {Point3D} from '../math/point.js';
+import {isIdentityMat33} from '../math/matrix.js';
+import {Size} from '../image/size.js';
+import {Spacing} from '../image/spacing.js';
+import {Image} from '../image/image.js';
+import {MaskImage} from '../image/maskImage.js';
+import {Geometry} from '../image/geometry.js';
+import {PlaneHelper} from '../image/planeHelper.js';
+import {
+  getSliceIterator,
+  getIteratorValues,
+  getRegionSliceIterator,
+  getVariableRegionSliceIterator
+} from '../image/iterator.js';
+import {PositionHelper} from '../image/positionHelper.js';
+
+/**
+ * @import {View} from '../image/view.js';
+ * @import {WindowLevel} from '../image/windowLevel.js';
+ * @import {WindowPreset} from '../image/windowPreset.js';
+ * @import {Point} from '../math/point.js';
+ * @import {Scalar2D} from '../math/scalar.js';
+ * @import {Matrix33} from '../math/matrix.js';
+ * @import {ViewLayer} from '../gui/viewLayer.js';
+ * @import {MaskSegmentViewHelper} from '../image/maskSegmentViewHelper.js';
+ */
 
 /**
  * View controller.
- *
- * @param {dwv.image.View} view The associated view.
- * @class
  */
-dwv.ViewController = function (view) {
-  // closure to self
-  var self = this;
-  // Slice/frame player ID (created by setInterval)
-  var playerID = null;
+export class ViewController {
+
+  /**
+   * Associated View.
+   *
+   * @type {View}
+   */
+  #view;
+
+  /**
+   * Plane helper.
+   *
+   * @type {PlaneHelper}
+   */
+  #planeHelper;
+
+  /**
+   * Third dimension player ID (created by setInterval).
+   *
+   * @type {ReturnType<typeof setInterval>|undefined}
+   */
+  #playerID;
+
+  /**
+   * @param {View} view The associated view.
+   */
+  constructor(view) {
+    // check view
+    if (typeof view.getImage() === 'undefined') {
+      throw new Error('View does not have an image, cannot setup controller');
+    }
+
+    this.#view = view;
+
+    // setup the plane helper
+    this.#planeHelper = new PlaneHelper(
+      view.getImage().getGeometry(),
+      view.getOrientation()
+    );
+  }
+
+  /**
+   * Get the plane helper.
+   *
+   * @returns {PlaneHelper} The helper.
+   */
+  getPlaneHelper() {
+    return this.#planeHelper;
+  }
+
+  /**
+   * Update the plane helper if there is a change in the image geometry.
+   */
+  updatePlaneHelper() {
+    this.#planeHelper = new PlaneHelper(
+      this.#view.getImage().getGeometry(),
+      this.#view.getOrientation()
+    );
+  }
+
+  /**
+   * Check is the associated image is a mask.
+   *
+   * @returns {boolean} True if the associated image is a mask.
+   */
+  isMask() {
+    return this.#view.isMask();
+  }
 
   /**
    * Initialise the controller.
    */
-  this.initialise = function () {
+  initialise() {
+    // set window/level to first preset
+    this.resetWindowLevel();
+    // default position
+    this.resetPosition();
+  }
+
+  /**
+   * Reset the window level.
+   */
+  resetWindowLevel() {
     // set window/level to first preset
     this.setWindowLevelPresetById(0);
+  }
+
+  /**
+   * Reset the position.
+   */
+  resetPosition() {
     // default position
-    this.setCurrentPosition2D(0, 0);
-    // default frame
-    this.setCurrentFrame(0);
-  };
+    this.setCurrentPosition(this.getPositionFromPlanePoint(
+      new Point2D(0, 0)
+    ));
+  }
+
+  /**
+   * Get the image modality.
+   *
+   * @returns {string} The modality.
+   */
+  getModality() {
+    return this.#view.getImage().getMeta().Modality;
+  }
+
+  /**
+   * Get the image SOP class UID.
+   *
+   * @returns {string|undefined} The uid.
+   */
+  getSopClassUid() {
+    return this.#view.getImage().getMeta().SOPClassUID;
+  }
 
   /**
    * Get the window/level presets names.
    *
-   * @returns {Array} The presets names.
+   * @returns {string[]} The presets names.
    */
-  this.getWindowLevelPresetsNames = function () {
-    return view.getWindowPresetsNames();
-  };
+  getWindowLevelPresetsNames() {
+    return this.#view.getWindowPresetsNames();
+  }
 
   /**
    * Add window/level presets to the view.
    *
-   * @param {object} presets A preset object.
+   * @param {Record<string, WindowPreset>} presets A preset object.
    * @returns {object} The list of presets.
    */
-  this.addWindowLevelPresets = function (presets) {
-    return view.addWindowPresets(presets);
-  };
+  addWindowLevelPresets(presets) {
+    return this.#view.addWindowPresets(presets);
+  }
 
   /**
    * Set the window level to the preset with the input name.
    *
    * @param {string} name The name of the preset to activate.
    */
-  this.setWindowLevelPreset = function (name) {
-    view.setWindowLevelPreset(name);
-  };
+  setWindowLevelPreset(name) {
+    this.#view.setWindowLevelPreset(name);
+  }
 
   /**
    * Set the window level to the preset with the input id.
    *
    * @param {number} id The id of the preset to activate.
    */
-  this.setWindowLevelPresetById = function (id) {
-    view.setWindowLevelPresetById(id);
-  };
+  setWindowLevelPresetById(id) {
+    this.#view.setWindowLevelPresetById(id);
+  }
 
   /**
    * Check if the controller is playing.
    *
-   * @returns {boolean} True is the controler is playing slices/frames.
+   * @returns {boolean} True if the controler is playing.
    */
-  this.isPlaying = function () {
-    return (playerID !== null);
-  };
+  isPlaying() {
+    return (typeof this.#playerID !== 'undefined');
+  }
+
+  /**
+   * Get a position helper: returns a new helper
+   * based on the current view.
+   *
+   * @returns {PositionHelper} The helper.
+   */
+  getPositionHelper() {
+    return new PositionHelper(this.#view);
+  }
 
   /**
    * Get the current position.
    *
-   * @returns {object} The position.
+   * @returns {Point} The position.
    */
-  this.getCurrentPosition = function () {
-    return view.getCurrentPosition();
-  };
+  getCurrentPosition() {
+    return this.#view.getCurrentPosition();
+  }
 
   /**
-   * Get the current spacing.
+   * Get the current index.
    *
-   * @returns {Array} The 2D spacing.
+   * @returns {Index} The current index.
    */
-  this.get2DSpacing = function () {
-    var spacing = view.getImage().getGeometry().getSpacing();
-    return [spacing.getColumnSpacing(), spacing.getRowSpacing()];
-  };
+  getCurrentIndex() {
+    return this.#view.getCurrentIndex();
+  }
+
+  /**
+   * Check if the volume of this view can follow the one of another view.
+   *
+   * @param {ViewController} viewController The view controller to follow.
+   * @param {number} value The volume id value to follow.
+   * @returns {boolean} True if the volume can follow.
+   */
+  canSyncVolume(viewController, value) {
+    return this.#view.getImage().getGeometry().canSyncVolume(
+      viewController.#view.getImage().getGeometry(), value);
+  }
+
+  /**
+   * Get the SOP image UID of the current image.
+   *
+   * @returns {string} The UID.
+   */
+  getCurrentImageUid() {
+    return this.#view.getCurrentImageUid();
+  }
+
+  /**
+   * Get the image origin for a image UID.
+   *
+   * @param {string} uid The UID.
+   * @returns {Point3D|undefined} The origin.
+   */
+  getOriginForImageUid(uid) {
+    return this.#view.getOriginForImageUid(uid);
+  }
+
+  /**
+   * Check if the image includes an UID.
+   *
+   * @param {string} uid The UID.
+   * @returns {boolean} True if present.
+   */
+  includesImageUid(uid) {
+    return this.#view.includesImageUid(uid);
+  }
+
+  /**
+   * Get the current oriented index.
+   *
+   * @returns {Index} The index.
+   */
+  getCurrentOrientedIndex() {
+    let res = this.getCurrentIndex();
+    if (typeof this.#view.getOrientation() !== 'undefined') {
+      // view oriented => image de-oriented
+      const vector = this.#planeHelper.getImageDeOrientedVector3D(
+        new Vector3D(res.get(0), res.get(1), res.get(2))
+      );
+      res = new Index([
+        vector.getX(), vector.getY(), vector.getZ()
+      ]);
+    }
+    return res;
+  }
+
+  /**
+   * Get the scroll dimension index.
+   *
+   * @returns {number} The index.
+   */
+  getScrollDimIndex() {
+    return this.#view.getScrollDimIndex();
+  }
+
+  /**
+   * Get the current index scroll value.
+   *
+   * @returns {number} The value.
+   */
+  getCurrentIndexScrollValue() {
+    return this.getCurrentIndex().get(this.#view.getScrollDimIndex());
+  }
+
+  /**
+   * Get the first origin or at a given position.
+   *
+   * @param {Point} [position] Optional position.
+   * @returns {Point3D} The origin.
+   */
+  getOrigin(position) {
+    return this.#view.getOrigin(position);
+  }
+
+  /**
+   * Is this view in the same orientation as the image aquisition.
+   *
+   * @returns {boolean} True if in aquisition plane.
+   */
+  isAquisitionOrientation() {
+    return this.#view.isAquisitionOrientation();
+  }
+
+  /**
+   * Get a list of points that define the plane at input position,
+   *   given this classes orientation.
+   *
+   * @param {Point} position The position.
+   * @returns {Point3D[]} An origin and 2 cosines vectors.
+   */
+  getPlanePoints(position) {
+    return this.#planeHelper.getPlanePoints(position);
+  }
+
+  /**
+   * Get the current scroll position value.
+   *
+   * @returns {number} The value.
+   */
+  getCurrentScrollPosition() {
+    const scrollDimIndex = this.#view.getScrollDimIndex();
+    return this.#view.getCurrentPosition().get(scrollDimIndex);
+  }
+
+  /**
+   * Generate display image data to be given to a canvas.
+   *
+   * @param {ImageData} array The array to fill in.
+   * @param {Index} [index] Optional index at which to generate,
+   *   otherwise generates at current index.
+   */
+  generateImageData(array, index) {
+    this.#view.generateImageData(array, index);
+  }
+
+  /**
+   * Set the associated image.
+   *
+   * @param {Image} img The associated image.
+   */
+  setImage(img) {
+    // geometries to check
+    const geometry0 = this.#view.getImage().getGeometry();
+    const geometry1 = img.getGeometry();
+
+    this.#view.setImage(img);
+
+    // update if geometry changes
+    if (!geometry0.equals(geometry1)) {
+      // update helpers
+      this.updatePlaneHelper();
+    }
+  }
+
+  /**
+   * Get the current view (2D) spacing.
+   *
+   * @returns {Scalar2D} The spacing as a 2D array.
+   */
+  get2DSpacing() {
+    const spacing = this.#view.getImage().getGeometry().getSpacing(
+      this.#view.getOrientation());
+    return spacing.get2D();
+  }
+
+  /**
+   * Get the image rescaled value at the input position.
+   *
+   * @param {Point} position The input position.
+   * @returns {number|undefined} The image value or undefined if out of bounds
+   *   or no quantifiable (for ex RGB).
+   */
+  getRescaledImageValue(position) {
+    const image = this.#view.getImage();
+    if (!image.canQuantify()) {
+      return;
+    }
+    const geometry = image.getGeometry();
+    const index = geometry.worldToIndex(position);
+    let value;
+    if (geometry.isIndexInBounds(index)) {
+      value = image.getRescaledValueAtIndex(index);
+    }
+    return value;
+  }
+
+  /**
+   * Get the numbers of the mask segments at the input position.
+   *
+   * @param {Point} position The input position.
+   * @returns {number[]} The list of segment numbers, empty if the image
+   *   is not a mask, for background or if out of bounds.
+   */
+  getSegmentNumbersAtPosition(position) {
+    const image = this.#view.getImage();
+    if (!(image instanceof MaskImage)) {
+      return [];
+    }
+    const geometry = image.getGeometry();
+    const index = geometry.worldToIndex(position);
+    if (!geometry.isIndexInBounds(index)) {
+      return [];
+    }
+    return image.getSegmentNumbersAtIndex(index);
+  }
+
+  /**
+   * Get the image pixel unit.
+   *
+   * @returns {string} The unit.
+   */
+  getPixelUnit() {
+    return this.#view.getImage().getMeta().pixelUnit;
+  }
+
+  /**
+   * Get the image length unit.
+   *
+   * @returns {string} The unit.
+   */
+  getLengthUnit() {
+    return this.#view.getImage().getMeta().lengthUnit;
+  }
+
+  /**
+   * Extract a slice from an image at the given index and orientation.
+   *
+   * @param {Image} image The image to parse.
+   * @param {Index} index The index at which to get the
+   *   image values.
+   * @param {boolean} isRescaled Flag for rescaled values (default false).
+   * @param {Matrix33} orientation The desired orientation.
+   * @returns {Image} The extracted slice.
+   */
+  #getSlice(image, index, isRescaled, orientation) {
+    // generate slice values
+    const sliceIter = getSliceIterator(
+      image,
+      index,
+      isRescaled,
+      orientation
+    );
+    const sliceValues = getIteratorValues(sliceIter);
+    // oriented geometry
+    const orientedSize = image.getGeometry().getSize(orientation);
+    const sizeValues = orientedSize.getValues();
+    sizeValues[2] = 1;
+    const sliceSize = new Size(sizeValues);
+    const orientedSpacing = image.getGeometry().getSpacing(orientation);
+    const spacingValues = orientedSpacing.getValues();
+    spacingValues[2] = 1;
+    const sliceSpacing = new Spacing(spacingValues);
+    const sliceOrigin = new Point3D(0, 0, 0);
+    const sliceGeometry =
+      new Geometry([sliceOrigin], sliceSize, sliceSpacing);
+    // slice image
+    // @ts-expect-error -- sliceValues is a number[], Image expects a TypedArray
+    return new Image(sliceGeometry, sliceValues);
+  }
 
   /**
    * Get some values from the associated image in a region.
    *
-   * @param {dwv.math.Point2D} min Minimum point.
-   * @param {dwv.math.Point2D} max Maximum point.
+   * @param {Point2D} min Minimum point.
+   * @param {Point2D} max Maximum point.
+   * @param {Index} index The index at which to get the
+   *   image values (combined with min/max).
    * @returns {Array} A list of values.
    */
-  this.getImageRegionValues = function (min, max) {
-    var iter = dwv.image.getRegionSliceIterator(
-      view.getImage(),
-      this.getCurrentPosition().k,
-      this.getCurrentFrame(),
-      true, min, max
-    );
-    var values = [];
+  getImageRegionValues(min, max, index) {
+    let image = this.#view.getImage();
+    const orientation = this.#view.getOrientation();
+    let imageIndex = index;
+    let rescaled = true;
+
+    // create oriented slice if needed
+    if (!isIdentityMat33(orientation)) {
+      image = this.#getSlice(image, imageIndex, rescaled, orientation);
+      // update position
+      imageIndex = new Index([0, 0, 0]);
+      rescaled = false;
+    }
+
+    // get region values
+    const iter = getRegionSliceIterator(
+      image, imageIndex, rescaled, min, max);
+    let values = [];
     if (iter) {
-      values = dwv.image.getIteratorValues(iter);
+      values = getIteratorValues(iter);
     }
     return values;
-  };
+  }
 
   /**
    * Get some values from the associated image in variable regions.
    *
-   * @param {Array} regions A list of regions.
+   * @param {number[][][]} regions A list of [x, y] pairs (min, max).
+   * @param {Index} index The index at which to get the
+   *   image values (combined with regions min/max).
    * @returns {Array} A list of values.
    */
-  this.getImageVariableRegionValues = function (regions) {
-    var iter = dwv.image.getVariableRegionSliceIterator(
-      view.getImage(),
-      this.getCurrentPosition().k,
-      this.getCurrentFrame(),
-      true, regions
-    );
-    var values = [];
+  getImageVariableRegionValues(regions, index) {
+    let image = this.#view.getImage();
+    const orientation = this.#view.getOrientation();
+    let imageIndex = index;
+    let rescaled = true;
+
+    // create oriented slice if needed
+    if (!isIdentityMat33(orientation)) {
+      image = this.#getSlice(image, imageIndex, rescaled, orientation);
+      // update position
+      imageIndex = new Index([0, 0, 0]);
+      rescaled = false;
+    }
+
+    // get region values
+    const iter = getVariableRegionSliceIterator(
+      image, imageIndex, rescaled, regions);
+    let values = [];
     if (iter) {
-      values = dwv.image.getIteratorValues(iter);
+      values = getIteratorValues(iter);
     }
     return values;
-  };
+  }
 
   /**
    * Can the image values be quantified?
    *
    * @returns {boolean} True if possible.
    */
-  this.canQuantifyImage = function () {
-    return view.getImage().getNumberOfComponents() === 1;
-  };
+  canQuantifyImage() {
+    return this.#view.getImage().canQuantify();
+  }
 
   /**
    * Can window and level be applied to the data?
    *
-   * @returns {boolean} True if the data is monochrome.
+   * @returns {boolean} True if possible.
+   * @deprecated Since v0.33, please use isMonochrome instead.
    */
-  this.canWindowLevel = function () {
-    return view.getImage().getPhotometricInterpretation()
-      .match(/MONOCHROME/) !== null;
-  };
+  canWindowLevel() {
+    return this.isMonochrome();
+  }
 
   /**
-   * Is the data mono-frame?
+   * Is the data monochrome.
    *
-   * @returns {boolean} True if the data only contains one frame.
+   * @returns {boolean} True if the data is monochrome.
    */
-  this.isMonoFrameData = function () {
-    return view.getImage().getNumberOfFrames() === 1;
-  };
+  isMonochrome() {
+    return this.#view.getImage().isMonochrome();
+  }
+
+  /**
+   * Can the data be scrolled?
+   *
+   * @returns {boolean} True if the data has either the third dimension
+   * or above greater than one.
+   */
+  canScroll() {
+    return this.#view.getImage().canScroll(this.#view.getOrientation());
+  }
+
+  /**
+   * Get the oriented image size.
+   *
+   * @returns {Size} The size.
+   */
+  getImageSize() {
+    return this.#view.getImage().getGeometry().getSize(
+      this.#view.getOrientation());
+  }
+
+  /**
+   * Get the oriented image spacing.
+   *
+   * @returns {Spacing} The spacing.
+   */
+  getImageSpacing() {
+    return this.#view.getImage().getGeometry().getSpacing(
+      this.#view.getOrientation());
+  }
+
+  /**
+   * Is the data size larger than one in the given dimension?
+   *
+   * @param {number} dim The dimension.
+   * @returns {boolean} True if the image size is larger than one
+   *   in the given dimension.
+   */
+  moreThanOne(dim) {
+    return this.getImageSize().moreThanOne(dim);
+  }
+
+  /**
+   * Get the image world (mm) 2D size.
+   *
+   * @returns {Scalar2D} The 2D size as {x,y}.
+   */
+  getImageWorldSize() {
+    const geometry = this.#view.getImage().getGeometry();
+    const size = geometry.getSize(this.#view.getOrientation()).get2D();
+    const spacing = geometry.getSpacing(this.#view.getOrientation()).get2D();
+    return {
+      x: size.x * spacing.x,
+      y: size.y * spacing.y
+    };
+  }
+
+  /**
+   * Get the image rescaled data range.
+   *
+   * @returns {object} The range as {min, max}.
+   */
+  getImageRescaledDataRange() {
+    return this.#view.getImage().getRescaledDataRange();
+  }
+
+  /**
+   * Compare the input meta data to the associated image one.
+   *
+   * @param {object} meta The meta data.
+   * @returns {boolean} True if the associated image has equal meta data.
+   */
+  equalImageMeta(meta) {
+    const imageMeta = this.#view.getImage().getMeta();
+    // loop through input meta keys
+    const metaKeys = Object.keys(meta);
+    for (let i = 0; i < metaKeys.length; ++i) {
+      const metaKey = metaKeys[i];
+      if (typeof imageMeta[metaKey] === 'undefined') {
+        return false;
+      }
+      if (imageMeta[metaKey] !== meta[metaKey]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Check if the current position (default) or
+   * the provided position is in bounds.
+   *
+   * @param {Point} [position] Optional position.
+   * @returns {boolean} True is the position is in bounds.
+   */
+  isPositionInBounds(position) {
+    return this.#view.isPositionInBounds(position);
+  }
 
   /**
    * Set the current position.
    *
-   * @param {object} pos The position.
-   * @param {boolean} silent If true, does not fire a slicechange event.
+   * @param {Point} pos The position.
+   * @param {boolean} [silent] If true, does not fire a
+   *   positionchange event.
    * @returns {boolean} False if not in bounds.
    */
-  this.setCurrentPosition = function (pos, silent) {
-    return view.setCurrentPosition(pos, silent);
-  };
+  setCurrentPosition(pos, silent) {
+    return this.#view.setCurrentPosition(pos, silent);
+  }
 
   /**
-   * Set the current 2D (i,j) position.
+   * Get a world position from a 2D plane position.
    *
-   * @param {number} i The column index.
-   * @param {number} j The row index.
+   * @param {Point2D} point2D The input point.
+   * @param {number} [k] Optional slice index,
+   *   if undefined, uses the current one.
+   * @returns {Point} The associated position.
+   */
+  getPositionFromPlanePoint(point2D, k) {
+    // keep third direction
+    if (typeof k === 'undefined') {
+      k = this.getCurrentIndexScrollValue();
+    }
+    const planePoint = new Point3D(point2D.getX(), point2D.getY(), k);
+    // de-orient
+    const point = this.#planeHelper.getImageOrientedPoint3D(planePoint);
+    // ~indexToWorld to not loose precision
+    const geometry = this.#view.getImage().getGeometry();
+    const point3D = geometry.pointToWorld(point);
+    // merge with current position to keep extra dimensions
+    return this.getCurrentPosition().mergeWith3D(point3D);
+  }
+
+  /**
+   * Check if an input plane point is in the geometrys' bounds.
+   *
+   * @param {Point2D} point2D The point to check.
+   * @returns {boolean} True if in bounds.
+   */
+  validatePlanePoint(point2D) {
+    const pos = this.getPositionFromPlanePoint(point2D);
+    const geometry = this.#view.getImage().getGeometry();
+    return geometry.isInBounds(pos);
+  }
+
+  /**
+   * Get a 2D plane position from a world position.
+   *
+   * @param {Point} point The 3D position.
+   * @returns {Point2D} The 2D position.
+   */
+  getPlanePositionFromPosition(point) {
+    // orient
+    const geometry = this.#view.getImage().getGeometry();
+    // ~worldToIndex to not loose precision
+    const point3D = geometry.worldToPoint(point);
+    const planePoint = this.#planeHelper.getImageDeOrientedPoint3D(point3D);
+    // return
+    return new Point2D(
+      planePoint.getX(),
+      planePoint.getY(),
+    );
+  }
+
+  /**
+   * Get the index of a world position.
+   *
+   * @param {Point} point The 3D position.
+   * @returns {Index} The index.
+   */
+  getIndexFromPosition(point) {
+    // orient
+    const geometry = this.#view.getImage().getGeometry();
+    // ~worldToIndex to not loose precision
+    return geometry.worldToIndex(point);
+  }
+
+  /**
+   * Get the world position of an index.
+   *
+   * @param {Index} index The index.
+   * @returns {Point} The position.
+   */
+  getPositionFromIndex(index) {
+    const geometry = this.#view.getImage().getGeometry();
+    return geometry.indexToWorld(index);
+  }
+
+  /**
+   * Set the current index.
+   *
+   * @param {Index} index The index.
+   * @param {boolean} [silent] If true, does not fire a positionchange event.
    * @returns {boolean} False if not in bounds.
    */
-  this.setCurrentPosition2D = function (i, j) {
-    return view.setCurrentPosition({
-      i: i,
-      j: j,
-      k: view.getCurrentPosition().k
-    });
-  };
+  setCurrentIndex(index, silent) {
+    return this.#view.setCurrentIndex(index, silent);
+  }
 
   /**
-   * Set the current slice position.
+   * Get a plane 3D position from a plane 2D position: does not compensate
+   *   for the image origin. Needed for setting the scale center...
    *
-   * @param {number} k The slice index.
-   * @returns {boolean} False if not in bounds.
+   * @param {Point2D} point2D The 2D position.
+   * @returns {Point3D} The 3D point.
    */
-  this.setCurrentSlice = function (k) {
-    return view.setCurrentPosition({
-      i: view.getCurrentPosition().i,
-      j: view.getCurrentPosition().j,
-      k: k
-    });
-  };
+  getPlanePositionFromPlanePoint(point2D) {
+    // keep third direction
+    const k = this.getCurrentIndexScrollValue();
+    const planePoint = new Point3D(point2D.getX(), point2D.getY(), k);
+    // de-orient
+    const point = this.#planeHelper.getTargetDeOrientedPoint3D(planePoint);
+    // ~indexToWorld to not loose precision
+    const geometry = this.#view.getImage().getGeometry();
+    const spacing = geometry.getRealSpacing();
+    return new Point3D(
+      point.getX() * spacing.get(0),
+      point.getY() * spacing.get(1),
+      point.getZ() * spacing.get(2));
+  }
 
   /**
-   * Increment the current slice number.
+   * Get a 3D offset from a plane one.
    *
-   * @returns {boolean} False if not in bounds.
+   * @param {Scalar2D} offset2D The plane offset as {x,y}.
+   * @returns {Vector3D} The 3D world offset.
    */
-  this.incrementSliceNb = function () {
-    return self.setCurrentSlice(view.getCurrentPosition().k + 1);
-  };
+  getOffset3DFromPlaneOffset(offset2D) {
+    return this.#planeHelper.getOffset3DFromPlaneOffset(offset2D);
+  }
 
   /**
-   * Decrement the current slice number.
-   *
-   * @returns {boolean} False if not in bounds.
+   * Scroll play: loop through all slices.
    */
-  this.decrementSliceNb = function () {
-    return self.setCurrentSlice(view.getCurrentPosition().k - 1);
-  };
-
-  /**
-   * Get the current frame.
-   *
-   * @returns {number} The frame number.
-   */
-  this.getCurrentFrame = function () {
-    return view.getCurrentFrame();
-  };
-
-  /**
-   * Set the current frame.
-   *
-   * @param {number} number The frame number.
-   * @returns {boolean} False if not in bounds.
-   */
-  this.setCurrentFrame = function (number) {
-    return view.setCurrentFrame(number);
-  };
-
-  /**
-   * Increment the current frame.
-   *
-   * @returns {boolean} False if not in bounds.
-   */
-  this.incrementFrameNb = function () {
-    return view.setCurrentFrame(view.getCurrentFrame() + 1);
-  };
-
-  /**
-   * Decrement the current frame.
-   *
-   * @returns {boolean} False if not in bounds.
-   */
-  this.decrementFrameNb = function () {
-    return view.setCurrentFrame(view.getCurrentFrame() - 1);
-  };
-
-  /**
-   * Go to first slice .
-   *
-   * @returns {boolean} False if not in bounds.
-   * @deprecated Use the setCurrentSlice function.
-   */
-  this.goFirstSlice = function () {
-    return view.setCurrentPosition({
-      i: view.getCurrentPosition().i,
-      j: view.getCurrentPosition().j,
-      k: 0
-    });
-  };
-
-  /**
-   *
-   */
-  this.play = function () {
-    if (playerID === null) {
-      var nSlices = view.getImage().getGeometry().getSize().getNumberOfSlices();
-      var nFrames = view.getImage().getNumberOfFrames();
-      var recommendedDisplayFrameRate =
-        view.getImage().getMeta().RecommendedDisplayFrameRate;
-      var milliseconds = view.getPlaybackMilliseconds(
+  play() {
+    // ensure data is scrollable: dim >= 3
+    if (!this.canScroll()) {
+      return;
+    }
+    if (typeof this.#playerID === 'undefined') {
+      const image = this.#view.getImage();
+      const recommendedDisplayFrameRate =
+        image.getMeta().RecommendedDisplayFrameRate;
+      const milliseconds = this.#view.getPlaybackMilliseconds(
         recommendedDisplayFrameRate);
+      const size = image.getGeometry().getSize();
+      const canScroll3D = size.canScroll3D();
+      const helper = this.getPositionHelper();
 
-      playerID = setInterval(function () {
-        if (nSlices !== 1) {
-          if (!self.incrementSliceNb()) {
-            self.setCurrentSlice(0);
-          }
-        } else if (nFrames !== 1) {
-          if (!self.incrementFrameNb()) {
-            self.setCurrentFrame(0);
-          }
+      this.#playerID = setInterval(() => {
+        let canDoMore;
+        if (canScroll3D) {
+          canDoMore = helper.incrementPositionAlongScroll();
+        } else {
+          canDoMore = helper.incrementPosition(3);
         }
-
+        // end of scroll, loop back
+        if (!canDoMore) {
+          const pos1 = this.getCurrentIndex();
+          const values = pos1.getValues();
+          const orientation = this.#view.getOrientation();
+          if (canScroll3D) {
+            values[orientation.getThirdColMajorDirection()] = 0;
+          } else {
+            values[3] = 0;
+          }
+          const index = new Index(values);
+          const geometry = this.#view.getImage().getGeometry();
+          this.setCurrentPosition(geometry.indexToWorld(index));
+        }
       }, milliseconds);
     } else {
       this.stop();
     }
-  };
+  }
 
   /**
-   *
+   * Stop scroll playing.
    */
-  this.stop = function () {
-    if (playerID !== null) {
-      clearInterval(playerID);
-      playerID = null;
+  stop() {
+    if (typeof this.#playerID !== 'undefined') {
+      clearInterval(this.#playerID);
+      this.#playerID = undefined;
     }
-  };
+  }
 
   /**
    * Get the window/level.
    *
-   * @returns {object} The window center and width.
+   * @returns {WindowLevel} The window and level.
    */
-  this.getWindowLevel = function () {
-    return {
-      width: view.getCurrentWindowLut().getWindowLevel().getWidth(),
-      center: view.getCurrentWindowLut().getWindowLevel().getCenter()
-    };
-  };
+  getWindowLevel() {
+    return this.#view.getWindowLevel();
+  }
 
   /**
-   * Set the window/level.
+   * Get the current window level preset name.
    *
-   * @param {number} wc The window center.
-   * @param {number} ww The window width.
+   * @returns {string} The preset name.
    */
-  this.setWindowLevel = function (wc, ww) {
-    view.setWindowLevel(wc, ww);
-  };
+  getCurrentWindowPresetName() {
+    return this.#view.getCurrentWindowPresetName();
+  }
+
+  /**
+   * Set the window and level.
+   *
+   * @param {WindowLevel} wl The window and level.
+   */
+  setWindowLevel(wl) {
+    this.#view.setWindowLevel(wl);
+  }
 
   /**
    * Get the colour map.
    *
-   * @returns {object} The colour map.
+   * @returns {string} The colour map name.
    */
-  this.getColourMap = function () {
-    return view.getColourMap();
-  };
+  getColourMap() {
+    return this.#view.getColourMap();
+  }
 
   /**
    * Set the colour map.
    *
-   * @param {object} colourMap The colour map.
+   * @param {string} name The colour map name.
    */
-  this.setColourMap = function (colourMap) {
-    view.setColourMap(colourMap);
-  };
+  setColourMap(name) {
+    this.#view.setColourMap(name);
+  }
 
   /**
-   * Set the colour map from a name.
-   *
-   * @param {string} name The name of the colour map to set.
+   * @callback alphaFn
+   * @param {number[]|number} value The pixel value.
+   * @param {number} index The values' index.
+   * @returns {number} The opacity of the input value.
    */
-  this.setColourMapFromName = function (name) {
-    // check if we have it
-    if (!dwv.tool.colourMaps[name]) {
-      throw new Error('Unknown colour map: \'' + name + '\'');
-    }
-    // enable it
-    this.setColourMap(dwv.tool.colourMaps[name]);
-  };
 
-}; // class dwv.ViewController
+  /**
+   * Set the view per value alpha function.
+   *
+   * @param {alphaFn} func The function.
+   */
+  setViewAlphaFunction(func) {
+    this.#view.setAlphaFunction(func);
+  }
+
+  /**
+   * Set the mask segment view helper to handle
+   *   hidden segments.
+   *
+   * @param {MaskSegmentViewHelper} helper The helper.
+   */
+  setMaskViewHelper(helper) {
+    this.#view.setMaskViewHelper(helper);
+  }
+
+  /**
+   * Get the segment highlight.
+   *
+   * @returns {{segmentNumber: number, opacity: number}|undefined}
+   *   The highlighted segment number and its opacity factor.
+   */
+  getSegmentHighlight() {
+    return this.#view.getSegmentHighlight();
+  }
+
+  /**
+   * Set the segment highlight: the opacity of the given segment
+   *   is multiplied by the input factor. Only one segment can be
+   *   highlighted at a time.
+   * This only has an effect on segmentation views.
+   *
+   * @param {number} [segmentNumber] The segment number,
+   *   undefined to remove the highlight.
+   * @param {number} [opacity] The opacity factor (between 0 and 1),
+   *   defaults to 1.
+   */
+  setSegmentHighlight(segmentNumber, opacity) {
+    this.#view.setSegmentHighlight(segmentNumber, opacity);
+  }
+
+  /**
+   * Get the fill opacity relative to the global opacity.
+   *
+   * @returns {number} The fill opacity (between 0 and 1).
+   */
+  getFillOpacity() {
+    return this.#view.getFillOpacity();
+  }
+
+  /**
+   * Set the fill opacity relative to the global opacity.
+   * This only has an effect on segmentation views, or any other alpha
+   * function that makes use of it.
+   *
+   * @param {number} opacity The fill opacity (between 0 and 1).
+   */
+  setFillOpacity(opacity) {
+    this.#view.setFillOpacity(opacity);
+  }
+
+  /**
+   * Get the thickness of the contour in pixels.
+   *
+   * @returns {number} The contour thickness (integer >= 1).
+   */
+  getContourThickness() {
+    return this.#view.getContourThickness();
+  }
+
+  /**
+   * Set the thickness of the contour in pixels.
+   * This only has an effect on segmentation views, or any other alpha
+   * function that makes use of it.
+   *
+   * @param {number} thickness The contour thickness (integer >= 1).
+   */
+  setContourThickness(thickness) {
+    this.#view.setContourThickness(thickness);
+  }
+
+  /**
+   * Bind the view image to the provided layer.
+   *
+   * @param {ViewLayer} viewLayer The layer to bind.
+   */
+  bindImageAndLayer(viewLayer) {
+    const image = this.#view.getImage();
+    image.addEventListener('imagecontentchange',
+      viewLayer.onimagecontentchange
+    );
+    image.addEventListener('imagegeometrychange',
+      viewLayer.onimagegeometrychange
+    );
+    image.addEventListener('imageresampled',
+      viewLayer.onimageresampled
+    );
+  }
+
+  /**
+   * Unbind the view image to the provided layer.
+   *
+   * @param {ViewLayer} viewLayer The layer to bind.
+   */
+  unbindImageAndLayer(viewLayer) {
+    const image = this.#view.getImage();
+    image.removeEventListener('imagecontentchange',
+      viewLayer.onimagecontentchange
+    );
+    image.removeEventListener('imagegeometrychange',
+      viewLayer.onimagegeometrychange
+    );
+    image.removeEventListener('imageresampled',
+      viewLayer.onimageresampled
+    );
+  }
+
+} // class ViewController

@@ -7,25 +7,81 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deploy-dir: ${{ steps.target.outputs.dir }}
     steps:
-    - name: Check out code
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
-    - name: Setup Node.js
-      uses: actions/setup-node@v1
-      with:
-        node-version: '14.x'
-    - name: Install dependencies
-      run: yarn install --frozen-lockfile
-    - name: Run lint
-      run: yarn run lint
-    - name: Run tests
-      run: yarn run test-ci --coverage --verbose
-    - name: Build
-      run: yarn run build
-    - name: Coveralls
-      uses: coverallsapp/github-action@master
-      with:
-        path-to-lcov: 'build/coverage/dwv/report-lcovonly.txt'
-        github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out code
+        uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - name: Install and enable Corepack
+        run: npm install -g corepack && corepack enable
+      - name: Install dependencies
+        run: yarn install --immutable
+      - name: Run lint
+        run: yarn run lint
+      - name: Run tests
+        run: yarn run test-ci
+      - name: Build
+        run: yarn run build-ci
+      - name: Build demo
+        run: yarn run build-demo
+      - name: Get deploy target
+        id: target
+        # develop branch: trunk, release tag (v1.2.3): stable,
+        # anything else (other branches, pre-release tags, PRs): no deploy
+        run: |
+          if [[ "$GITHUB_REF" == refs/heads/develop ]]; then
+            echo "dir=./demo/trunk" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "dir=./demo/stable" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload demo
+        if: steps.target.outputs.dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo
+          path: build/demo/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.deploy-dir != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # deploys (develop, version tags) share a group so that they
+    # push to gh-pages one after the other
+    concurrency:
+      group: ${{ github.workflow }}-gh-pages
+      cancel-in-progress: false
+    steps:
+      - name: Check out gh-pages
+        uses: actions/checkout@v7
+        with:
+          ref: gh-pages
+      - name: Download demo
+        uses: actions/download-artifact@v8
+        with:
+          name: demo
+          path: ${{ runner.temp }}/demo
+      - name: Push to gh-pages
+        env:
+          DEPLOY_DIR: ${{ needs.build.outputs.deploy-dir }}
+          DEMO_DIR: ${{ runner.temp }}/demo
+        run: |
+          git config user.email github-actions@github.com
+          git config user.name github-actions
+          mkdir -p "$DEPLOY_DIR"
+          # ':?' aborts if DEPLOY_DIR is empty or unset (avoids 'rm -Rf /*')
+          rm -Rf "${DEPLOY_DIR:?}"/*
+          cp -Rf "$DEMO_DIR"/* "$DEPLOY_DIR"
+          git add -A "$DEPLOY_DIR"
+          git diff-index --quiet HEAD ||
+            git commit -m "CI run ${{ github.run_number }} pushed to $DEPLOY_DIR"
+          git push origin gh-pages

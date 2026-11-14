@@ -1,274 +1,1377 @@
-// namespaces
-var dwv = dwv || {};
-dwv.html = dwv.html || {};
+import {ListenerHandler} from '../utils/listen.js';
+import {DrawController} from '../app/drawController.js';
+import {getScaledOffset} from './layerGroup.js';
+import {
+  InteractionEventNames,
+  getInteractionEventOptions
+} from './generic.js';
+import {logger} from '../utils/logger.js';
+import {toStringId} from '../utils/array.js';
+import {precisionRound} from '../math/number.js';
+import {AddAnnotationCommand} from '../command/drawCommands.js';
+import {
+  isNodeWithId,
+  isPositionNode,
+  isNodeNameLabel
+} from '../tools/shapes/drawBounds.js';
+import {Style} from '../gui/style.js';
+import {custom} from '../app/custom.js';
+
+// external
+import Konva from 'konva';
 
 /**
- * The Konva namespace.
- *
- * @external Konva
- * @see https://konvajs.org/
+ * @import {Point, Point2D, Point3D} from '../math/point.js';
+ * @import {Vector3D} from '../math/vector.js';
+ * @import {Scalar2D, Scalar3D} from '../math/scalar.js';
+ * @import {Index} from '../math/index.js';
+ * @import {Image} from '../image/image.js';
+ * @import {PlaneHelper} from '../image/planeHelper.js';
+ * @import {Annotation} from '../image/annotation.js';
+ * @import {AnnotationGroup} from '../image/annotationGroup.js';
+ * @import {DrawShapeHandler} from '../tools/shapes/drawShapeHandler.js';
  */
-var Konva = Konva || {};
+
+/**
+ * Debug function to output the layer hierarchy as text.
+ *
+ * @param {object} layer The Konva layer.
+ * @param {string} prefix A display prefix (used in recursion).
+ * @returns {string} A text representation of the hierarchy.
+ */
+// function getHierarchyLog(layer, prefix) {
+//   if (typeof prefix === 'undefined') {
+//     prefix = '';
+//   }
+//   const kids = layer.getChildren();
+//   let log = prefix + '|__ ' + layer.name() + ': ' + layer.id() + '\n';
+//   for (let i = 0; i < kids.length; ++i) {
+//     log += getHierarchyLog(kids[i], prefix + '    ');
+//   }
+//   return log;
+// }
 
 /**
  * Draw layer.
  *
- * @param {object} containerDiv The layer div.
- * @class
+ * Not an EventTarget in order to forward native DOM events while
+ * preserving `preventDefault()` for tools (see '#fireDomEvent').
  */
-dwv.html.DrawLayer = function (containerDiv) {
-
-  // specific css class name
-  containerDiv.className += ' drawLayer';
-
-  // konva stage
-  var konvaStage = null;
-  // konva layer
-  var konvaLayer;
+export class DrawLayer {
 
   /**
-   * The layer size as {x,y}.
+   * The container div.
    *
-   * @private
-   * @type {object}
+   * @type {HTMLDivElement}
    */
-  var layerSize;
+  #containerDiv;
+
+  /**
+   * Konva stage.
+   *
+   * @type {Konva.Stage}
+   */
+  #konvaStage = null;
+
+  /**
+   * The layer base size as {x,y}.
+   *
+   * @type {Scalar2D}
+   */
+  #baseSize;
+
+  /**
+   * The layer base spacing as {x,y}.
+   *
+   * @type {Scalar2D}
+   */
+  #baseSpacing;
+
+  /**
+   * The layer fit scale.
+   *
+   * @type {Scalar2D}
+   */
+  #fitScale = {x: 1, y: 1};
+
+  /**
+   * The layer flip scale.
+   *
+   * @type {Scalar3D}
+   */
+  #flipScale = {x: 1, y: 1, z: 1};
+
+  /**
+   * The base layer offset.
+   *
+   * @type {Scalar2D}
+   */
+  #baseOffset = {x: 0, y: 0};
+
+  /**
+   * The view offset.
+   *
+   * @type {Scalar2D}
+   */
+  #viewOffset = {x: 0, y: 0};
+
+  /**
+   * The zoom offset.
+   *
+   * @type {Scalar2D}
+   */
+  #zoomOffset = {x: 0, y: 0};
+
+  /**
+   * The pan offset.
+   *
+   * @type {Scalar2D}
+   */
+  #panOffset = {x: 0, y: 0};
+
+  /**
+   * The flip offset.
+   *
+   * @type {Scalar2D}
+   */
+  #flipOffset = {x: 0, y: 0};
+
+  /**
+   * The current annotation highlight reset function.
+   *
+   * @type {Function|undefined}
+   */
+  #resetHighlight;
 
   /**
    * The draw controller.
    *
-   * @private
-   * @type {object}
+   * @type {DrawController}
    */
-  var drawController = null;
+  #drawController;
+
+  /**
+   * The plane helper.
+   *
+   * @type {PlaneHelper}
+   */
+  #planeHelper;
+
+  /**
+   * The associated data id.
+   *
+   * @type {string}
+   */
+  #dataId;
+
+  /**
+   * The reference layer id.
+   *
+   * @type {string}
+   */
+  #referenceLayerId;
+
+  /**
+   * Current position group id.
+   *
+   * @type {string|undefined}
+   */
+  #currentPosGroupId;
+
+  /**
+   * Current time index.
+   *
+   * @type {number|undefined}
+   */
+  #currentTimeIndex;
+
+  /**
+   * Draw shape handler.
+   *
+   * @type {DrawShapeHandler|undefined}
+   */
+  #shapeHandler;
+
+  /**
+   * Visible labels flag.
+   *
+   * @type {boolean}
+   */
+  #visibleLabels = true;
+
+  /**
+   * @param {HTMLDivElement} containerDiv The layer div, its id will be used
+   *   as this layer id.
+   */
+  constructor(containerDiv) {
+    this.#containerDiv = containerDiv;
+    // specific css class name
+    this.#containerDiv.className += ' drawLayer';
+  }
+
+  /**
+   * Set the draw shape handler.
+   *
+   * @param {DrawShapeHandler|undefined} handler The shape handler.
+   */
+  setShapeHandler(handler) {
+    this.#shapeHandler = handler;
+  }
+
+  /**
+   * Get the associated data id.
+   *
+   * @returns {string} The id.
+   */
+  getDataId() {
+    return this.#dataId;
+  }
+
+  /**
+   * Get the reference layer id.
+   *
+   * @returns {string} The id.
+   */
+  getReferenceLayerId() {
+    return this.#referenceLayerId;
+  }
 
   /**
    * Listener handler.
    *
-   * @type {object}
-   * @private
+   * @type {ListenerHandler}
    */
-  var listenerHandler = new dwv.utils.ListenerHandler();
+  #listenerHandler = new ListenerHandler();
 
   /**
    * Get the Konva stage.
    *
-   * @returns {object} The stage.
+   * @returns {Konva.Stage} The stage.
    */
-  this.getKonvaStage = function () {
-    return konvaStage;
-  };
+  getKonvaStage() {
+    return this.#konvaStage;
+  }
 
   /**
    * Get the Konva layer.
    *
-   * @returns {object} The layer.
+   * @returns {Konva.Layer} The layer.
    */
-  this.getKonvaLayer = function () {
-    return konvaLayer;
-  };
+  getKonvaLayer() {
+    // there should only be one layer
+    return this.#konvaStage.getLayers()[0];
+  }
 
   /**
    * Get the draw controller.
    *
-   * @returns {object} The controller.
+   * @returns {DrawController} The controller.
    */
-  this.getDrawController = function () {
-    return drawController;
-  };
+  getDrawController() {
+    return this.#drawController;
+  }
+
+  /**
+   * Set the plane helper.
+   *
+   * @param {PlaneHelper} helper The helper.
+   */
+  setPlaneHelper(helper) {
+    this.#planeHelper = helper;
+  }
 
   // common layer methods [start] ---------------
 
   /**
-   * Get the layer size.
+   * Get the id of the layer.
    *
-   * @returns {object} The size as {x,y}.
+   * @returns {string} The string id.
    */
-  this.getSize = function () {
-    return layerSize;
-  };
+  getId() {
+    return this.#containerDiv.id;
+  }
+
+  /**
+   * Remove the HTML element from the DOM.
+   */
+  removeFromDOM() {
+    this.#containerDiv.remove();
+  }
+
+  /**
+   * Get the layer base size (without scale).
+   *
+   * @returns {Scalar2D} The size as {x,y}.
+   */
+  getBaseSize() {
+    return this.#baseSize;
+  }
 
   /**
    * Get the layer opacity.
    *
    * @returns {number} The opacity ([0:1] range).
    */
-  this.getOpacity = function () {
-    return konvaStage.opacity();
-  };
+  getOpacity() {
+    return this.#konvaStage.opacity();
+  }
 
   /**
    * Set the layer opacity.
    *
    * @param {number} alpha The opacity ([0:1] range).
    */
-  this.setOpacity = function (alpha) {
-    konvaStage.opacity(Math.min(Math.max(alpha, 0), 1));
-  };
+  setOpacity(alpha) {
+    const opacity = Math.min(Math.max(alpha, 0), 1);
+    if (opacity === this.#konvaStage.opacity()) {
+      return;
+    }
+
+    this.#konvaStage.opacity(opacity);
+
+    /**
+     * Opacity change event.
+     *
+     * @event App#opacitychange
+     * @type {CustomEvent}
+     * @property {object} detail The event detail.
+     * @property {string} detail.srclayerid The source layer id.
+     * @property {string} detail.dataid The data id.
+     * @property {Array} detail.value The changed value.
+     */
+    this.#fireEvent(new CustomEvent('opacitychange', {
+      detail: {
+        value: [opacity]
+      }
+    }));
+  }
+
+  /**
+   * Add a flip offset along the layer X axis.
+   */
+  addFlipOffsetX() {
+    // flip offset
+    const scale = this.#konvaStage.scale();
+    const size = this.#konvaStage.size();
+    this.#flipOffset.x += size.width / scale.x;
+    // apply
+    const offset = this.#konvaStage.offset();
+    offset.x += this.#flipOffset.x;
+    this.#konvaStage.offset(offset);
+  }
+
+  /**
+   * Add a flip offset along the layer Y axis.
+   */
+  addFlipOffsetY() {
+    // flip offset
+    const scale = this.#konvaStage.scale();
+    const size = this.#konvaStage.size();
+    this.#flipOffset.y += size.height / scale.y;
+    // apply
+    const offset = this.#konvaStage.offset();
+    offset.y += this.#flipOffset.y;
+    this.#konvaStage.offset(offset);
+  }
+
+  /**
+   * Flip the scale along the layer X axis.
+   */
+  flipScaleX() {
+    this.#flipScale.x *= -1;
+  }
+
+  /**
+   * Flip the scale along the layer Y axis.
+   */
+  flipScaleY() {
+    this.#flipScale.y *= -1;
+  }
+
+  /**
+   * Flip the scale along the layer Z axis.
+   */
+  flipScaleZ() {
+    this.#flipScale.z *= -1;
+  }
 
   /**
    * Set the layer scale.
    *
-   * @param {object} newScale The scale as {x,y}.
+   * @param {Scalar3D} newScale The scale as {x,y,z}.
+   * @param {Point3D} [center] The scale center.
    */
-  this.setScale = function (newScale) {
-    konvaStage.scale(newScale);
+  setScale(newScale, center) {
+    const orientedNewScale =
+      this.#planeHelper.getTargetOrientedPositiveXYZ({
+        x: newScale.x * this.#flipScale.x,
+        y: newScale.y * this.#flipScale.y,
+        z: newScale.z * this.#flipScale.z,
+      });
+    const finalNewScale = {
+      x: this.#fitScale.x * orientedNewScale.x,
+      y: this.#fitScale.y * orientedNewScale.y
+    };
+
+    const offset = this.#konvaStage.offset();
+
+    if (Math.abs(newScale.x) === 1 &&
+      Math.abs(newScale.y) === 1 &&
+      Math.abs(newScale.z) === 1) {
+      // reset zoom offset for scale=1
+      const resetOffset = {
+        x: offset.x - this.#zoomOffset.x,
+        y: offset.y - this.#zoomOffset.y
+      };
+      // store new offset
+      this.#zoomOffset = {x: 0, y: 0};
+      this.#konvaStage.offset(resetOffset);
+    } else if (typeof center !== 'undefined') {
+      let worldCenter = this.#planeHelper.getPlaneOffsetFromOffset3D({
+        x: center.getX(),
+        y: center.getY(),
+        z: center.getZ()
+      });
+      // center was obtained with viewLayer.displayToMainPlanePos
+      // compensated for baseOffset
+      // TODO: justify...
+      worldCenter = {
+        x: worldCenter.x + this.#baseOffset.x,
+        y: worldCenter.y + this.#baseOffset.y
+      };
+
+      const newOffset = getScaledOffset(
+        offset, this.#konvaStage.scale(), finalNewScale, worldCenter);
+
+      const newZoomOffset = {
+        x: this.#zoomOffset.x + newOffset.x - offset.x,
+        y: this.#zoomOffset.y + newOffset.y - offset.y
+      };
+      // store new offset
+      this.#zoomOffset = newZoomOffset;
+      this.#konvaStage.offset(newOffset);
+    }
+
+    this.#konvaStage.scale(finalNewScale);
     // update labels
-    updateLabelScale(newScale);
-  };
+    this.#updateLabelScale(finalNewScale);
+  }
+
+  /**
+   * Initialise the layer scale.
+   *
+   * @param {Scalar3D} newScale The scale as {x,y,z}.
+   * @param {Scalar2D} absoluteZoomOffset The zoom offset as {x,y}
+   *   without the fit scale (as provided by getAbsoluteZoomOffset).
+   */
+  initScale(newScale, absoluteZoomOffset) {
+    const orientedNewScale = this.#planeHelper.getTargetOrientedPositiveXYZ({
+      x: newScale.x * this.#flipScale.x,
+      y: newScale.y * this.#flipScale.y,
+      z: newScale.z * this.#flipScale.z,
+    });
+    const finalNewScale = {
+      x: this.#fitScale.x * orientedNewScale.x,
+      y: this.#fitScale.y * orientedNewScale.y
+    };
+    this.#konvaStage.scale(finalNewScale);
+
+    this.#zoomOffset = {
+      x: absoluteZoomOffset.x / this.#fitScale.x,
+      y: absoluteZoomOffset.y / this.#fitScale.y
+    };
+    const offset = this.#konvaStage.offset();
+    this.#konvaStage.offset({
+      x: offset.x + this.#zoomOffset.x,
+      y: offset.y + this.#zoomOffset.y
+    });
+  }
 
   /**
    * Set the layer offset.
    *
-   * @param {object} newOffset The offset as {x,y}.
+   * @param {Scalar3D} newOffset The offset as {x,y,z}.
    */
-  this.setOffset = function (newOffset) {
-    konvaStage.offset(newOffset);
-  };
+  setOffset(newOffset) {
+    const newPanOffset =
+      this.#planeHelper.getPlaneOffsetFromOffset3D(newOffset);
+    const offset = this.#konvaStage.offset();
+    this.#konvaStage.offset({
+      x: offset.x - this.#panOffset.x + newPanOffset.x,
+      y: offset.y - this.#panOffset.y + newPanOffset.y
+    });
+    this.#panOffset = newPanOffset;
+  }
 
   /**
-   * Set the layer z-index.
+   * Set the base layer offset. Updates the layer offset.
    *
-   * @param {number} index The index.
+   * @param {Vector3D} scrollOffset The scroll offset vector.
+   * @param {Vector3D} planeOffset The plane offset vector.
+   * @returns {boolean} True if the offset was updated.
    */
-  this.setZIndex = function (index) {
-    containerDiv.style.zIndex = index;
-  };
-
-  /**
-   * Resize the layer: update the window scale and layer sizes.
-   *
-   * @param {object} newScale The layer scale as {x,y}.
-   */
-  this.resize = function (newScale) {
-    // resize stage
-    konvaStage.setWidth(parseInt(layerSize.x * newScale.x, 10));
-    konvaStage.setHeight(parseInt(layerSize.y * newScale.y, 10));
-    // set scale
-    this.setScale(newScale);
-  };
+  setBaseOffset(scrollOffset, planeOffset) {
+    const scrollDimIndex = this.#planeHelper.getNativeScrollDimIndex();
+    const newOffset = this.#planeHelper.getPlaneOffsetFromOffset3D({
+      x: scrollDimIndex === 0 ? scrollOffset.getX() : planeOffset.getX(),
+      y: scrollDimIndex === 1 ? scrollOffset.getY() : planeOffset.getY(),
+      z: scrollDimIndex === 2 ? scrollOffset.getZ() : planeOffset.getZ(),
+    });
+    const needsUpdate = this.#baseOffset.x !== newOffset.x ||
+      this.#baseOffset.y !== newOffset.y;
+    // reset offset if needed
+    if (needsUpdate) {
+      const offset = this.#konvaStage.offset();
+      this.#konvaStage.offset({
+        x: offset.x - this.#baseOffset.x + newOffset.x,
+        y: offset.y - this.#baseOffset.y + newOffset.y
+      });
+      this.#baseOffset = newOffset;
+    }
+    return needsUpdate;
+  }
 
   /**
    * Display the layer.
    *
    * @param {boolean} flag Whether to display the layer or not.
    */
-  this.display = function (flag) {
-    containerDiv.style.display = flag ? '' : 'none';
-  };
+  display(flag) {
+    this.#containerDiv.style.display = flag ? '' : 'none';
+  }
 
   /**
    * Check if the layer is visible.
    *
    * @returns {boolean} True if the layer is visible.
    */
-  this.isVisible = function () {
-    return containerDiv.style.display === '';
-  };
+  isVisible() {
+    return this.#containerDiv.style.display === '';
+  }
 
   /**
    * Draw the content (imageData) of the layer.
-   * The imageData variable needs to be set
+   * The imageData variable needs to be set.
    */
-  this.draw = function () {
-    konvaStage.draw();
-  };
+  draw() {
+    this.#konvaStage.draw();
+  }
 
   /**
-   * Initialise the layer: set the canvas and context
+   * Initialise the layer: set the canvas and context.
    *
-   * @param {object} image The image.
-   * @param {object} _metaData The image meta data.
+   * @param {Scalar2D} size The image size as {x,y}.
+   * @param {Scalar2D} spacing The image spacing as {x,y}.
+   * @param {string} refLayerId The reference image dataId.
    */
-  this.initialise = function (image, _metaData) {
-    // get sizes
-    var size = image.getGeometry().getSize();
-    layerSize = {
-      x: size.getNumberOfColumns(),
-      y: size.getNumberOfRows()
-    };
+  initialise(size, spacing, refLayerId) {
+    // set locals
+    this.#baseSize = size;
+    this.#baseSpacing = spacing;
+    this.#referenceLayerId = refLayerId;
 
     // create stage
-    konvaStage = new Konva.Stage({
-      container: containerDiv,
-      width: layerSize.x,
-      height: layerSize.y,
+    this.#konvaStage = new Konva.Stage({
+      container: this.#containerDiv,
+      width: this.#baseSize.x,
+      height: this.#baseSize.y,
       listening: false
     });
     // reset style
     // (avoids a not needed vertical scrollbar)
-    konvaStage.getContent().setAttribute('style', '');
+    this.#konvaStage.getContent().setAttribute('style', '');
 
     // create layer
-    konvaLayer = new Konva.Layer({
+    const konvaLayer = new Konva.Layer({
       listening: false,
       visible: true
     });
-    konvaStage.add(konvaLayer);
+    this.#konvaStage.add(konvaLayer);
+  }
+
+  /**
+   * Set the annotation group.
+   *
+   * @param {AnnotationGroup} annotationGroup The annotation group.
+   * @param {string} dataId The associated data id.
+   * @param {object} exeCallback The undo stack callback.
+   */
+  setAnnotationGroup(annotationGroup, dataId, exeCallback) {
+    this.#dataId = dataId;
+    // local listeners
+    annotationGroup.addEventListener('annotationadd',
+      (/** @type {CustomEvent} */ event) => {
+        // draw annotation
+        this.#addAnnotationDraw(event.detail.data, true);
+        this.getKonvaLayer().draw();
+      });
+    annotationGroup.addEventListener('annotationupdate',
+      (/** @type {CustomEvent} */ event) => {
+        // update annotation draw
+        this.#updateAnnotationDraw(event.detail.data);
+        this.getKonvaLayer().draw();
+      });
+    annotationGroup.addEventListener('annotationremove',
+      (/** @type {CustomEvent} */ event) => {
+        // remove annotation draw
+        this.#removeAnnotationDraw(event.detail.data);
+        this.getKonvaLayer().draw();
+      });
+    annotationGroup.addEventListener(
+      'annotationgroupeditablechange',
+      (/** @type {CustomEvent} */ event) => {
+        this.activateCurrentPositionShapes(event.detail.data);
+      }
+    );
 
     // create draw controller
-    drawController = new dwv.DrawController(konvaLayer);
-  };
+    this.#drawController = new DrawController(annotationGroup);
+
+    // annotations are allready in the annotation list,
+    // -> no need to add them, just draw and save command
+    if (annotationGroup.getLength() !== 0) {
+      for (const annotation of annotationGroup.getList()) {
+        // draw annotation
+        this.#addAnnotationDraw(annotation, false);
+        // create the draw command
+        const command = new AddAnnotationCommand(
+          annotation, this.getDrawController());
+        // add command to undo stack
+        exeCallback(command);
+      }
+    }
+  }
 
   /**
-   * Activate the layer: propagate events.
+   * Activate shapes at current position.
+   *
+   * @param {boolean} flag The flag to activate or not.
    */
-  this.activate = function () {
-    konvaStage.listening(true);
+  activateCurrentPositionShapes(flag) {
+    const konvaLayer = this.getKonvaLayer();
+
+    const drawController = this.getDrawController();
+    const canActivate = flag &&
+      drawController.getAnnotationGroup().isEditable();
+
+    // stop stage listening
+    this.#konvaStage.listening(false);
+
+    if (typeof this.#shapeHandler !== 'undefined') {
+      // reset shape editor (remove anchors) if its shape
+      // is not at the current position anymore
+      const editorGroup = this.#shapeHandler.getEditorShapeGroup();
+      if (!canActivate ||
+        typeof editorGroup === 'undefined' ||
+        editorGroup.getParent() !== this.#getCurrentPosGroup()) {
+        this.#shapeHandler.disableAndResetEditor();
+      }
+      // remove listeners for all position groups
+      const allPosGroups = konvaLayer.getChildren();
+      for (const posGroup of allPosGroups) {
+        if (posGroup instanceof Konva.Group) {
+          posGroup.getChildren().forEach((group) => {
+            if (group instanceof Konva.Group) {
+              this.#shapeHandler.removeShapeListeners(group);
+            }
+          });
+        }
+      }
+    }
+
+    // activate shape listeners if possible
+    if (canActivate) {
+      // start stage listening
+      this.#konvaStage.listening(true);
+      // shape groups at the current position
+      const shapeGroups =
+        this.#getCurrentPosGroup().getChildren();
+      // listen if we have shapes
+      if (shapeGroups.length !== 0) {
+        konvaLayer.listening(true);
+      }
+      // add listeners for position group
+      if (typeof this.#shapeHandler !== 'undefined') {
+        shapeGroups.forEach((group) => {
+          if (group instanceof Konva.Group) {
+            const annotation = drawController.getAnnotation(group.id());
+            this.#shapeHandler.addShapeGroupListeners(group, annotation, this);
+          }
+        });
+      }
+    }
+
+    konvaLayer.draw();
+  }
+
+  /**
+   * Get the position group id for an annotation.
+   *
+   * @param {Annotation} annotation The target annotation.
+   * @returns {string|undefined} The group id.
+   */
+  #getAnnotationPosGroupId(annotation) {
+    let points;
+    // annotation planePoints are only present
+    // for non aquisition plane
+    if (typeof annotation.planePoints !== 'undefined') {
+      // use plane points
+      points = annotation.planePoints;
+    } else if (typeof annotation.planeOrigin !== 'undefined') {
+      // just use plane origin
+      points = [annotation.planeOrigin];
+    }
+    let posId;
+    if (typeof points !== 'undefined') {
+      // 1-based frame number to 0-based time index
+      let timeIndex;
+      if (typeof annotation.referencedFrameNumber !== 'undefined') {
+        timeIndex = annotation.referencedFrameNumber - 1;
+      }
+      posId = this.#getPositionId(points, timeIndex);
+    }
+    return posId;
+  }
+
+  /**
+   * Get a string id from input plane points.
+   *
+   * @param {Point3D[]} points A list of points that defined a plane.
+   * @param {number} [timeIndex] Optional time index.
+   * @returns {string} The string id.
+   */
+  #getPositionId(points, timeIndex) {
+    let res = '';
+    for (const point of points) {
+      if (res.length !== 0) {
+        res += '-';
+      }
+      const posValues = [
+        precisionRound(point.getX(), 2),
+        precisionRound(point.getY(), 2),
+        precisionRound(point.getZ(), 2),
+      ];
+      res += toStringId(posValues);
+    }
+    if (typeof timeIndex !== 'undefined') {
+      res += `-${timeIndex}`;
+    }
+    return res;
+  }
+
+  /**
+   * Find the shape group associated to an annotation.
+   *
+   * @param {Annotation} annotation The annotation.
+   * @returns {Konva.Group|undefined} The shape group.
+   */
+  #findShapeGroup(annotation) {
+    let res;
+
+    const posGroupId = this.#getAnnotationPosGroupId(annotation);
+    const layerChildren = this.getKonvaLayer().getChildren(
+      isNodeWithId(posGroupId));
+    if (layerChildren.length !== 0) {
+      const posGroup = layerChildren[0];
+      if (!(posGroup instanceof Konva.Group)) {
+        return;
+      }
+      const posChildren = posGroup.getChildren(
+        isNodeWithId(annotation.trackingUid));
+      if (posChildren.length !== 0 &&
+        posChildren[0] instanceof Konva.Group) {
+        res = posChildren[0];
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Draw an annotation: create the shape group and add it to
+   *   the Konva layer.
+   *
+   * @param {Annotation} annotation The annotation to draw.
+   * @param {boolean} visible The position group visibility.
+   */
+  #addAnnotationDraw(annotation, visible) {
+    // check for compatible view
+    if (!annotation.canView() ||
+      !annotation.isCompatibleView(this.#planeHelper)) {
+      return;
+    }
+    const posGroupId = this.#getAnnotationPosGroupId(annotation);
+    // Get or create position-group if it does not exist and
+    // append it to konvaLayer
+    let posGroup = this.getKonvaLayer().getChildren(
+      isNodeWithId(posGroupId))[0];
+    if (typeof posGroup === 'undefined') {
+      posGroup = new Konva.Group({
+        id: posGroupId,
+        name: 'position-group',
+        visible
+      });
+      this.getKonvaLayer().add(posGroup);
+    }
+    if (!(posGroup instanceof Konva.Group)) {
+      return;
+    };
+
+    const style = new Style();
+    const stage = this.getKonvaStage();
+    style.setZoomScale(stage.scale());
+
+    // shape group (use first one since it will be removed from
+    // the group when we change it)
+    const factory = annotation.getFactory();
+    if (typeof factory === 'undefined') {
+      throw new Error('Cannot add an annotation draw without factory');
+    }
+    const shapeGroup = factory.createShapeGroup(annotation, style);
+    // add group to posGroup (switches its parent)
+    posGroup.add(shapeGroup);
+
+    // activate shape if possible
+    if (visible &&
+      typeof this.#shapeHandler !== 'undefined'
+    ) {
+      this.#shapeHandler.addShapeGroupListeners(shapeGroup, annotation, this);
+    }
+    // set label visibility
+    this.setLabelVisibility(shapeGroup);
+  }
+
+  /**
+   * Remove an annotation draw.
+   *
+   * @param {Annotation} annotation The annotation to remove.
+   * @returns {boolean} True if the shape group has been found and removed.
+   */
+  #removeAnnotationDraw(annotation) {
+    const shapeGroup = this.#findShapeGroup(annotation);
+    if (!(shapeGroup instanceof Konva.Group)) {
+      logger.debug('No shape group to remove');
+      return false;
+    };
+    shapeGroup.remove();
+    return true;
+  }
+
+  /**
+   * Update an annotation draw.
+   *
+   * @param {Annotation} annotation The annotation to update.
+   */
+  #updateAnnotationDraw(annotation) {
+    if (this.#removeAnnotationDraw(annotation)) {
+      this.#addAnnotationDraw(annotation, true);
+    }
+  }
+
+  /**
+   * Fit the layer to its parent container.
+   *
+   * @param {Scalar2D} containerSize The container size as {x,y}.
+   * @param {number} divToWorldSizeRatio The div to world size ratio.
+   * @param {Scalar2D} fitOffset The fit offset as {x,y}.
+   */
+  fitToContainer(containerSize, divToWorldSizeRatio, fitOffset) {
+    // fit scale
+    const newFitScale = {
+      x: divToWorldSizeRatio * this.#baseSpacing.x,
+      y: divToWorldSizeRatio * this.#baseSpacing.y
+    };
+    const fitRatio = {
+      x: newFitScale.x / this.#fitScale.x,
+      y: newFitScale.y / this.#fitScale.y
+    };
+
+    // size ratio (calculated before update)
+    const sizeRatio = {
+      x: containerSize.x / (this.#konvaStage.width() * fitRatio.x),
+      y: containerSize.y / (this.#konvaStage.height() * fitRatio.y)
+    };
+
+    // set canvas size if different from previous
+    if (this.#konvaStage.width() !== containerSize.x ||
+      this.#konvaStage.height() !== containerSize.y) {
+      this.#konvaStage.width(containerSize.x);
+      this.#konvaStage.height(containerSize.y);
+    }
+
+    // #scale = inputScale * fitScale * flipScale
+    // flipScale does not change here, we can omit it
+    // newScale = (#scale / fitScale) * newFitScale
+    const newScale = {
+      x: this.#konvaStage.scale().x * fitRatio.x,
+      y: this.#konvaStage.scale().y * fitRatio.y
+    };
+
+    // set scales if different from previous
+    if (this.#konvaStage.scale().x !== newScale.x ||
+      this.#konvaStage.scale().y !== newScale.y) {
+      this.#fitScale = newFitScale;
+      this.#konvaStage.scale(newScale);
+      this.#updateLabelScale(newScale);
+    }
+
+    // view offset
+    const newViewOffset = {
+      x: fitOffset.x / newFitScale.x,
+      y: fitOffset.y / newFitScale.y
+    };
+    // flip offset
+    const scaledImageSize = {
+      x: containerSize.x / newFitScale.x,
+      y: containerSize.y / newFitScale.y
+    };
+    const newFlipOffset = {
+      x: this.#flipOffset.x !== 0 ? scaledImageSize.x : 0,
+      y: this.#flipOffset.y !== 0 ? scaledImageSize.y : 0,
+    };
+
+    // set offsets if different from previous
+    if (this.#viewOffset.x !== newViewOffset.x ||
+      this.#viewOffset.y !== newViewOffset.y ||
+      this.#flipOffset.x !== newFlipOffset.x ||
+      this.#flipOffset.y !== newFlipOffset.y) {
+      const newZoomOffset = {
+        x: this.#zoomOffset.x * sizeRatio.x,
+        y: this.#zoomOffset.y * sizeRatio.y
+      };
+      // update global offset
+      this.#konvaStage.offset({
+        x: this.#konvaStage.offset().x +
+          newViewOffset.x - this.#viewOffset.x +
+          newFlipOffset.x - this.#flipOffset.x +
+          newZoomOffset.x - this.#zoomOffset.x,
+        y: this.#konvaStage.offset().y +
+          newViewOffset.y - this.#viewOffset.y +
+          newFlipOffset.y - this.#flipOffset.y +
+          newZoomOffset.y - this.#zoomOffset.y
+      });
+      // update private local offsets
+      this.#flipOffset = newFlipOffset;
+      this.#viewOffset = newViewOffset;
+      this.#zoomOffset = newZoomOffset;
+    }
+  }
+
+  /**
+   * Get the top most visible annotation at the current position
+   *   that contains the input plane point.
+   *
+   * @param {Point2D} planePoint The plane point, in the reference
+   *   view layer plane coordinates.
+   * @param {number} [tolerance] Optional maximum distance to a shape,
+   *   in plane coordinates, defaults to 0.
+   * @returns {Annotation|undefined} The annotation, undefined if none.
+   */
+  getAnnotationAt(planePoint, tolerance = 0) {
+    const posGroup = this.getKonvaLayer().getChildren(
+      isNodeWithId(this.#currentPosGroupId))[0];
+    if (!(posGroup instanceof Konva.Group) || !posGroup.isVisible()) {
+      return;
+    }
+    const drawController = this.getDrawController();
+    // last child is drawn on top
+    const shapeGroups = posGroup.getChildren().slice().reverse();
+    for (const shapeGroup of shapeGroups) {
+      if (!shapeGroup.isVisible()) {
+        continue;
+      }
+      const annotation = drawController.getAnnotation(shapeGroup.id());
+      if (annotation?.contains(planePoint, tolerance)) {
+        return annotation;
+      }
+    }
+  }
+
+  /**
+   * Check the visibility of an annotation.
+   *
+   * @param {string} id The id of the annotation.
+   * @returns {boolean} True if the annotation is visible.
+   */
+  isAnnotationVisible(id) {
+    // get the group (annotation and group have same id)
+    const group = this.#getGroup(id);
+    if (typeof group === 'undefined') {
+      return false;
+    }
+    // get visibility
+    return group.isVisible();
+  }
+
+  /**
+   * Set the visibility of an annotation.
+   *
+   * @param {string} id The id of the annotation.
+   * @param {boolean} [visible] True to set to visible,
+   *   will toggle visibility if not defined.
+   * @returns {boolean} False if the annotation shape cannot be found.
+   */
+  setAnnotationVisibility(id, visible) {
+    // get the group (annotation and group have same id)
+    const group = this.#getGroup(id);
+    if (typeof group === 'undefined') {
+      return false;
+    }
+    // if not set, toggle visibility
+    if (typeof visible === 'undefined') {
+      visible = !group.isVisible();
+    }
+    group.visible(visible);
+
+    // udpate
+    this.draw();
+
+    return true;
+  }
+
+  /**
+   * Temporarily highlight an annotation: its opacity progressively
+   *   dims to 20% and comes back to normal in one pulse. Only one
+   *   annotation is highlighted at a time: a new call resets the
+   *   previous highlight.
+   *
+   * @param {string} id The id of the annotation.
+   * @param {number} [duration] The highlight duration in milliseconds,
+   *   defaults to 500.
+   * @returns {boolean} False if the annotation shape cannot be found.
+   */
+  highlightAnnotation(id, duration) {
+    if (typeof duration === 'undefined') {
+      duration = 500;
+    }
+    // reset previous highlight
+    if (typeof this.#resetHighlight !== 'undefined') {
+      this.#resetHighlight();
+    }
+    // get the group (annotation and group have same id)
+    const group = this.#getGroup(id);
+    if (typeof group === 'undefined') {
+      return false;
+    }
+
+    // custom highlight
+    if (typeof custom.highlightAnnotation !== 'undefined') {
+      this.#resetHighlight = custom.highlightAnnotation(
+        group, this.getKonvaLayer(), duration);
+      return true;
+    }
+
+    const opacity = group.opacity();
+    const reset = () => {
+      anim.stop();
+      group.opacity(opacity);
+      this.draw();
+      if (this.#resetHighlight === reset) {
+        this.#resetHighlight = undefined;
+      }
+    };
+    // opacity goes from 1 to 0.2 and back to 1 over the duration
+    // (the animation redraws the layer at each frame)
+    const anim = new Konva.Animation((frame) => {
+      if (frame.time >= duration) {
+        reset();
+        return false;
+      }
+      const dim = 0.8 * Math.sin(Math.PI * frame.time / duration);
+      group.opacity(opacity * (1 - dim));
+    }, this.getKonvaLayer());
+    this.#resetHighlight = reset;
+    anim.start();
+
+    return true;
+  }
+
+  /**
+   * Set the visibility of all labels.
+   *
+   * @param {boolean} [visible] True to set to visible,
+   *   will toggle visibility if not defined.
+   */
+  setLabelsVisibility(visible) {
+    this.#visibleLabels = visible;
+
+    const posGroups = this.getKonvaLayer().getChildren();
+    for (const posGroup of posGroups) {
+      if (posGroup instanceof Konva.Group) {
+        const shapeGroups = posGroup.getChildren();
+        for (const shapeGroup of shapeGroups) {
+          if (shapeGroup instanceof Konva.Group) {
+            this.#setLabelVisibility(shapeGroup, visible);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Set a shape group label visibility.
+   *
+   * @param {Konva.Group} shapeGroup The shape group.
+   * @param {boolean} [visible] True to set to visible,
+   *   will toggle visibility if not defined.
+   */
+  #setLabelVisibility(shapeGroup, visible) {
+    const label = shapeGroup.getChildren(isNodeNameLabel)[0];
+    if (!(label instanceof Konva.Label)) {
+      return;
+    }
+    // if not set, toggle visibility
+    if (typeof visible === 'undefined') {
+      visible = !label.isVisible();
+    }
+    // set visible only for non empty text
+    if (typeof label.getText() !== 'undefined' &&
+      label.getText().text().length !== 0) {
+      label.visible(visible);
+      const connector = shapeGroup.getChildren(node =>
+        (node.className === 'Line') && node.name() === 'connector')[0];
+      if (connector) {
+        connector.visible(visible);
+      }
+    }
+  }
+
+  /**
+   * Set a shape group label visibility according to
+   *  this layer setting.
+   *
+   * @param {Konva.Group} shapeGroup The shape group.
+   */
+  setLabelVisibility(shapeGroup) {
+    this.#setLabelVisibility(shapeGroup, this.#visibleLabels);
+  }
+
+  /**
+   * Delete a Draw from the stage.
+   *
+   * @deprecated Since v0.34, please switch to `annotationGroup.remove`.
+   * @param {string} _id The id of the group to delete.
+   * @param {Function} _exeCallback The callback to call once the
+   *  DeleteCommand has been executed.
+   */
+  deleteDraw(_id, _exeCallback) {
+    // does nothing
+  }
+
+  /**
+   * Delete all Draws from the stage.
+   *
+   * @deprecated Since v0.34, please switch to `annotationGroup.remove`.
+   * @param {Function} _exeCallback The callback to call once the
+   *  DeleteCommand has been executed.
+   */
+  deleteDraws(_exeCallback) {
+    // does nothing
+  }
+
+  /**
+   * Get the total number of draws of this layer
+   * (at all positions).
+   *
+   * @returns {number|undefined} The total number of draws.
+   */
+  getNumberOfDraws() {
+    const posGroups = this.getKonvaLayer().getChildren();
+    let count = 0;
+    for (const posGroup of posGroups) {
+      if (posGroup instanceof Konva.Group) {
+        count += posGroup.getChildren().length;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Enable and listen to container interaction events.
+   */
+  bindInteraction() {
+    this.#konvaStage.listening(true);
     // allow pointer events
-    containerDiv.style.pointerEvents = 'auto';
+    this.#containerDiv.style.pointerEvents = 'auto';
     // interaction events
-    var names = dwv.gui.interactionEventNames;
-    for (var i = 0; i < names.length; ++i) {
-      containerDiv.addEventListener(names[i], fireEvent);
+    const names = InteractionEventNames;
+    for (let i = 0; i < names.length; ++i) {
+      this.#containerDiv.addEventListener(names[i], this.#fireDomEvent,
+        getInteractionEventOptions(names[i]));
     }
-  };
+  }
 
   /**
-   * Deactivate the layer: stop propagating events.
+   * Disable and stop listening to container interaction events.
    */
-  this.deactivate = function () {
-    konvaStage.listening(false);
+  unbindInteraction() {
+    this.#konvaStage.listening(false);
     // disable pointer events
-    containerDiv.style.pointerEvents = 'none';
+    this.#containerDiv.style.pointerEvents = 'none';
     // interaction events
-    var names = dwv.gui.interactionEventNames;
-    for (var i = 0; i < names.length; ++i) {
-      containerDiv.removeEventListener(names[i], fireEvent);
+    const names = InteractionEventNames;
+    for (let i = 0; i < names.length; ++i) {
+      this.#containerDiv.removeEventListener(names[i], this.#fireDomEvent);
     }
-  };
+  }
+
+  /**
+   * Set the current position.
+   *
+   * @param {Point} position The new position.
+   * @param {Index} [index] Optional coresponding index.
+   * @returns {boolean} True if the position was updated.
+   */
+  setCurrentPosition(position, index) {
+    if (typeof index === 'undefined') {
+      index = this.#planeHelper.worldToIndex(position);
+    }
+    const planePoints = this.#planeHelper.getPlanePoints(position);
+    let points;
+    if (this.#planeHelper.isAquisitionOrientation()) {
+      // just use plane origin
+      points = [planePoints[0]];
+    } else {
+      // use plane points
+      points = planePoints;
+    }
+    // use the index: the position can hold a volume id
+    // (keep the current one if not provided, for ex from a 3D mask
+    // of a 4D image)
+    if (index.length() > 3) {
+      this.#currentTimeIndex = index.get(3);
+    }
+    const posGroupId = this.#getPositionId(points, this.#currentTimeIndex);
+
+    this.#activateDrawLayer(posGroupId);
+    // TODO: add check
+    this.#fireEvent(new CustomEvent('positionchange', {
+      detail: {
+        value: [
+          index.getValues(),
+          position.getValues(),
+        ],
+        valid: true
+      }
+    }));
+
+    return true;
+  }
+
+  /**
+   * Activate the current draw layer.
+   *
+   * @param {string} posGroupId The position group ID.
+   */
+  #activateDrawLayer(posGroupId) {
+    this.#currentPosGroupId = posGroupId;
+
+    // get all position groups
+    const posGroups = this.getKonvaLayer().getChildren(isPositionNode);
+    // reset or set the visible property
+    let visible;
+    for (let i = 0, leni = posGroups.length; i < leni; ++i) {
+      visible = false;
+      if (typeof posGroupId !== 'undefined' &&
+        posGroups[i].id() === posGroupId) {
+        visible = true;
+      }
+      // group members inherit the visible property
+      posGroups[i].visible(visible);
+    }
+
+    // show current draw layer
+    this.getKonvaLayer().draw();
+  }
+
+  /**
+   * Get the current position group.
+   *
+   * @returns {Konva.Group|undefined} The Konva group.
+   */
+  #getCurrentPosGroup() {
+    if (typeof this.#currentPosGroupId === 'undefined') {
+      return;
+    }
+    // get position groups
+    const posGroups = this.getKonvaLayer().getChildren((node) => {
+      return node.id() === this.#currentPosGroupId;
+    });
+    // if one group, use it
+    // if no group, create one
+    let posGroup;
+    if (posGroups.length === 1) {
+      if (posGroups[0] instanceof Konva.Group) {
+        posGroup = posGroups[0];
+      }
+    } else if (posGroups.length === 0) {
+      posGroup = new Konva.Group();
+      posGroup.name('position-group');
+      posGroup.id(this.#currentPosGroupId);
+      posGroup.visible(true); // dont inherit
+      // add new group to layer
+      this.getKonvaLayer().add(posGroup);
+    } else {
+      logger.warn('Unexpected number of draw position groups');
+    }
+    // return
+    return posGroup;
+  }
+
+  /**
+   * Get a Konva group using its id.
+   *
+   * @param {string} id The group id.
+   * @returns {Konva.Group|undefined} The Konva group.
+   */
+  #getGroup(id) {
+    return this.getKonvaLayer().findOne(`#${id}`);
+  }
 
   /**
    * Add an event listener to this class.
    *
    * @param {string} type The event type.
-   * @param {object} callback The method associated with the provided
+   * @param {Function} callback The function associated with the provided
    *   event type, will be called with the fired event.
    */
-  this.addEventListener = function (type, callback) {
-    listenerHandler.add(type, callback);
-  };
+  addEventListener(type, callback) {
+    this.#listenerHandler.add(type, callback);
+  }
 
   /**
    * Remove an event listener from this class.
    *
    * @param {string} type The event type.
-   * @param {object} callback The method associated with the provided
+   * @param {Function} callback The function associated with the provided
    *   event type.
    */
-  this.removeEventListener = function (type, callback) {
-    listenerHandler.remove(type, callback);
-  };
+  removeEventListener(type, callback) {
+    this.#listenerHandler.remove(type, callback);
+  }
 
   /**
    * Fire an event: call all associated listeners with the input event object.
    *
-   * @param {object} event The event to fire.
-   * @private
+   * @param {CustomEvent} event The event to fire.
    */
-  function fireEvent(event) {
-    listenerHandler.fireEvent(event);
-  }
+  #fireEvent = (event) => {
+    const detail = Object.assign({}, event.detail, {
+      srclayerid: this.getId(),
+      dataid: this.#dataId,
+    });
+    this.#listenerHandler.fireEvent(new CustomEvent(event.type, {detail}));
+  };
+
+  /**
+   * Forward a DOM interaction event.
+   *
+   * @param {object} event The DOM event to forward.
+   */
+  #fireDomEvent = (event) => {
+    event.srclayerid = this.getId();
+    event.dataid = this.#dataId;
+    this.#listenerHandler.fireEvent(event);
+  };
 
   // common layer methods [end] ---------------
 
@@ -276,17 +1379,82 @@ dwv.html.DrawLayer = function (containerDiv) {
    * Update label scale: compensate for it so
    *   that label size stays visually the same.
    *
-   * @param {object} scale The scale to compensate for
+   * @param {Scalar2D} scale The scale to compensate for as {x,y}.
    */
-  function updateLabelScale(scale) {
-    // same formula as in style::applyZoomScale:
+  #updateLabelScale(scale) {
+    // same formula as in labelFactory::create
     // compensate for scale and times 2 so that font 10 looks like a 10
-    var ratioX = 2 / scale.x;
-    var ratioY = 2 / scale.y;
+    const ratioX = 2 / scale.x;
+    const ratioY = 2 / scale.y;
     // compensate scale for labels
-    var labels = konvaStage.find('Label');
-    for (var i = 0; i < labels.length; ++i) {
+    const labels = this.#konvaStage.find('Label');
+    for (let i = 0; i < labels.length; ++i) {
       labels[i].scale({x: ratioX, y: ratioY});
     }
   }
-}; // DrawLayer class
+
+} // DrawLayer class
+
+// *************************
+// legacy code to allow to convert old state into annotation
+// *************************
+
+/**
+ * Draw meta data.
+ */
+export class DrawMeta {
+  /**
+   * Draw quantification.
+   *
+   * @type {object}
+   */
+  quantification;
+
+  /**
+   * Draw text expression. Can contain variables surrounded with '{}' that will
+   * be extracted from the quantification object.
+   *
+   * @type {string}
+   */
+  textExpr;
+}
+
+/**
+ * Draw details.
+ */
+export class DrawDetails {
+  /**
+   * The draw ID.
+   *
+   * @type {number}
+   */
+  id;
+
+  /**
+   * The draw position: an Index converted to string.
+   *
+   * @type {string}
+   */
+  position;
+
+  /**
+   * The draw type.
+   *
+   * @type {string}
+   */
+  type;
+
+  /**
+   * The draw color: for example 'green', '#00ff00' or 'rgb(0,255,0)'.
+   *
+   * @type {string}
+   */
+  color;
+
+  /**
+   * The draw meta.
+   *
+   * @type {DrawMeta}
+   */
+  meta;
+}

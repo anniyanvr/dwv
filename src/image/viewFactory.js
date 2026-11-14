@@ -1,65 +1,85 @@
-// namespaces
-var dwv = dwv || {};
-dwv.image = dwv.image || {};
+import {custom} from '../app/custom.js';
+import {View} from './view.js';
+import {WindowLevel} from './windowLevel.js';
+import {WindowPreset} from './windowPreset.js';
 
 /**
- * View factory.
- *
- * @class
+ * @import {Image} from './image.js';
+ * @import {DataElement} from '../dicom/dataElement.js';
  */
-dwv.image.ViewFactory = function () {};
 
 /**
- * Get an View object from the read DICOM file.
+ * List of default window level presets.
  *
- * @param {object} dicomElements The DICOM tags.
- * @param {object} image The associated image.
- * @returns {dwv.image.View} The new View.
+ * @type {Record<string, Record<string, WindowLevel>>}
  */
-dwv.image.ViewFactory.prototype.create = function (dicomElements, image) {
-  // view
-  var view = new dwv.image.View(image);
-
-  // default color map
-  if (image.getPhotometricInterpretation() === 'MONOCHROME1') {
-    view.setDefaultColourMap(dwv.image.lut.invPlain);
-  } else if (image.getPhotometricInterpretation() === 'PALETTE COLOR') {
-    var paletteLut = image.getMeta().paletteLut;
-    if (typeof (paletteLut) !== 'undefined') {
-      view.setDefaultColourMap(paletteLut);
-    }
+const defaultWlPresets = {
+  CT: {
+    mediastinum: new WindowLevel(40, 400),
+    lung: new WindowLevel(-500, 1500),
+    bone: new WindowLevel(500, 2000),
+    brain: new WindowLevel(40, 80),
+    head: new WindowLevel(90, 350)
   }
-
-  // window level presets
-  var windowPresets = {};
-  // image presets
-  if (typeof image.getMeta().windowPresets !== 'undefined') {
-    windowPresets = image.getMeta().windowPresets;
-  }
-  // min/max
-  // Not filled yet since it is stil too costly to calculate min/max
-  // for each slice... It will be filled at first use
-  // (see view.setWindowLevelPreset).
-  // Order is important, if no wl from DICOM, this will be the default.
-  windowPresets.minmax = {name: 'minmax'};
-  // optional modality presets
-  if (typeof dwv.tool !== 'undefined' &&
-    typeof dwv.tool.defaultpresets !== 'undefined') {
-    var modality = image.getMeta().Modality;
-    for (var key in dwv.tool.defaultpresets[modality]) {
-      var preset = dwv.tool.defaultpresets[modality][key];
-      windowPresets[key] = {
-        wl: new dwv.image.WindowLevel(preset.center, preset.width),
-        name: key
-      };
-    }
-  }
-
-  // store
-  view.setWindowPresets(windowPresets);
-
-  // set the initial position
-  view.setInitialPosition();
-
-  return view;
 };
+
+/**
+ * {@link View} factory.
+ */
+export class ViewFactory {
+
+  /**
+   * Get an View object from the read DICOM file.
+   *
+   * @param {Record<string, DataElement>} dataElements The DICOM tags.
+   * @param {Image} image The associated image.
+   * @returns {View} The new View.
+   */
+  create(dataElements, image) {
+    // view
+    const view = new View(image);
+
+    // default color map
+    if (image.getPhotometricInterpretation() === 'MONOCHROME1') {
+      view.setColourMap('invPlain');
+    }
+
+    // window level presets
+    /**
+     * @type {Record<string, WindowPreset>}
+     */
+    let windowPresets = {};
+    // image presets
+    if (typeof image.getMeta().windowPresets !== 'undefined') {
+      windowPresets = image.getMeta().windowPresets;
+    }
+    // min/max
+    // Not filled yet since it is stil too costly to calculate min/max
+    // for each slice... It will be filled at each use
+    // (see view.setWindowLevelPreset).
+    // Order is important, if no wl from DICOM, this will be the default.
+    windowPresets.minmax = new WindowPreset('minmax');
+    // optional modality presets
+    const modality = image.getMeta().Modality;
+    let wlPresets;
+    if (typeof custom.wlPresets !== 'undefined' &&
+      typeof custom.wlPresets[modality] !== 'undefined') {
+      wlPresets = custom.wlPresets[modality];
+    } else {
+      wlPresets = defaultWlPresets[modality];
+    }
+    for (const key in wlPresets) {
+      const preset = wlPresets[key];
+      windowPresets[key] = new WindowPreset(
+        key,
+        [new WindowLevel(preset.center, preset.width)]
+      );
+    }
+
+    // store
+    view.setWindowPresets(windowPresets);
+
+    return view;
+  }
+
+} // class ViewFactory

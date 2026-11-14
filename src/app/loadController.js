@@ -1,275 +1,223 @@
-// namespaces
-var dwv = dwv || {};
+import {FilesLoader} from '../io/filesLoader.js';
+import {MemoryLoader} from '../io/memoryLoader.js';
+import {UrlsLoader} from '../io/urlsLoader.js';
+
+/**
+ * List of load event names.
+ *
+ * @type {string[]}
+ */
+export const loadEventNames = [
+  'loadstart',
+  'loadprogress',
+  'loaditem',
+  'load',
+  'loadend',
+  'error',
+  'abort',
+  'timeout'
+];
 
 /**
  * Load controller.
- *
- * @param {string} defaultCharacterSet The default character set.
- * @class
  */
-dwv.LoadController = function (defaultCharacterSet) {
-  // closure to self
-  var self = this;
-  // current loader
-  var currentLoader = null;
-  // Is the data mono-slice?
-  var isMonoSliceData = null;
+export class LoadController extends EventTarget {
 
   /**
-   * Load a list of files. Can be image files or a state file.
+   * The default character set.
    *
-   * @param {Array} files The list of files to load.
+   * @type {string}
    */
-  this.loadFiles = function (files) {
-    // has been checked for emptiness.
-    var ext = files[0].name.split('.').pop().toLowerCase();
-    if (ext === 'json') {
-      loadStateFile(files[0]);
-    } else {
-      loadImageFiles(files);
-    }
-  };
+  #defaultCharacterSet;
 
   /**
-   * Load a list of URLs. Can be image files or a state file.
+   * List of current loaders.
    *
-   * @param {Array} urls The list of urls to load.
-   * @param {object} options The load options:
+   * @type {object}
+   */
+  #currentLoaders = {};
+
+  /**
+   * @param {string} defaultCharacterSet The default character set.
+   */
+  constructor(defaultCharacterSet) {
+    super();
+    this.#defaultCharacterSet = defaultCharacterSet;
+  }
+
+  /**
+   * Load a list of image files.
+   *
+   * @param {File[]} files The list of files to load.
+   * @param {string} dataId The data Id.
+   */
+  loadFiles(files, dataId) {
+    this.#loadImageFiles(files, dataId);
+  }
+
+  /**
+   * Load a list of image URLs.
+   *
+   * @param {string[]} urls The list of urls to load.
+   * @param {string} dataId The data Id.
+   * @param {object} [options] The load options:
    * - requestHeaders: an array of {name, value} to use as request headers.
    * - withCredentials: credentials flag to pass to the request.
    */
-  this.loadURLs = function (urls, options) {
-    // has been checked for emptiness.
-    var ext = urls[0].split('.').pop().toLowerCase();
-    if (ext === 'json') {
-      loadStateUrl(urls[0], options);
-    } else {
-      loadImageUrls(urls, options);
-    }
-  };
+  loadURLs(urls, dataId, options) {
+    this.#loadImageUrls(urls, dataId, options);
+  }
 
   /**
    * Load a list of ArrayBuffers.
    *
    * @param {Array} data The list of ArrayBuffers to load
-   *   in the form of [{name: "", filename: "", data: data}].
+   *   in the form of [{name: '', filename: '', data: data}].
+   * @param {string} dataId The data Id.
    */
-  this.loadImageObject = function (data) {
+  loadImageObject(data, dataId) {
     // create IO
-    var memoryIO = new dwv.io.MemoryLoader();
-    // create options
-    var options = {};
+    const memoryIO = new MemoryLoader();
     // load data
-    loadImageData(data, memoryIO, options);
-  };
+    this.#loadData(data, memoryIO, dataId);
+  }
 
   /**
-   * Abort the current load.
-   */
-  this.abort = function () {
-    if (currentLoader) {
-      currentLoader.abort();
-      currentLoader = null;
-    }
-  };
-
-  /**
-   * Is the data mono-slice?
+   * Get the currently loaded data ids.
    *
-   * @returns {boolean} True if the data only contains one slice.
+   * @returns {string[]} The data ids.
    */
-  this.isMonoSliceData = function () {
-    return isMonoSliceData;
-  };
+  getLoadingDataIds() {
+    return Object.keys(this.#currentLoaders);
+  }
+
+  /**
+   * Abort an individual current loader.
+   *
+   * @param {string} dataId The data to stop loading.
+   */
+  abort(dataId) {
+    if (typeof this.#currentLoaders[dataId] !== 'undefined') {
+      this.#currentLoaders[dataId].loader.abort();
+      delete this.#currentLoaders[dataId];
+    }
+  }
 
   // private ----------------------------------------------------------------
 
   /**
    * Load a list of image files.
    *
-   * @param {Array} files The list of image files to load.
-   * @private
+   * @param {File[]} files The list of image files to load.
+   * @param {string} dataId The data Id.
    */
-  function loadImageFiles(files) {
+  #loadImageFiles(files, dataId) {
     // create IO
-    var fileIO = new dwv.io.FilesLoader();
+    const fileIO = new FilesLoader();
+    fileIO.setDefaultCharacterSet(this.#defaultCharacterSet);
     // load data
-    loadImageData(files, fileIO);
+    this.#loadData(files, fileIO, dataId);
   }
 
   /**
    * Load a list of image URLs.
    *
-   * @param {Array} urls The list of urls to load.
-   * @param {object} options The load options:
+   * @param {string[]} urls The list of urls to load.
+   * @param {string} [dataId] The data Id.
+   * @param {object} [options] The load options:
    * - requestHeaders: an array of {name, value} to use as request headers.
    * - withCredentials: credentials flag to pass to the request.
-   * @private
    */
-  function loadImageUrls(urls, options) {
+  #loadImageUrls(urls, dataId, options) {
     // create IO
-    var urlIO = new dwv.io.UrlsLoader();
+    const urlIO = new UrlsLoader();
+    urlIO.setDefaultCharacterSet(this.#defaultCharacterSet);
     // load data
-    loadImageData(urls, urlIO, options);
+    this.#loadData(urls, urlIO, dataId, options);
   }
 
   /**
-   * Load a State file.
+   * Load a list of data.
    *
-   * @param {string} file The state file to load.
-   * @private
-   */
-  function loadStateFile(file) {
-    // create IO
-    var fileIO = new dwv.io.FilesLoader();
-    // load data
-    loadStateData([file], fileIO);
-  }
-
-  /**
-   * Load a State url.
-   *
-   * @param {string} url The state url to load.
-   * @param {object} options The load options:
-   * - requestHeaders: an array of {name, value} to use as request headers.
-   * - withCredentials: credentials flag to pass to the request.
-   * @private
-   */
-  function loadStateUrl(url, options) {
-    // create IO
-    var urlIO = new dwv.io.UrlsLoader();
-    // load data
-    loadStateData([url], urlIO, options);
-  }
-
-  /**
-   * Load a list of image data.
-   *
-   * @param {Array} data Array of data to load.
+   * @param {string[]|File[]|Array} data Array of data to load.
    * @param {object} loader The data loader.
-   * @param {object} options Options passed to the final loader.
-   * @private
+   * @param {string} dataId The data id.
+   * @param {object} [options] Options passed to the final loader.
    */
-  function loadImageData(data, loader, options) {
-    // first data name
-    var firstName = '';
-    if (typeof data[0].name !== 'undefined') {
-      firstName = data[0].name;
-    } else {
-      firstName = data[0];
-    }
-
-    // flag used by scroll to decide wether to activate or not
-    // TODO: supposing multi-slice for zip files, could not be...
-    isMonoSliceData = (data.length === 1 &&
-            firstName.split('.').pop().toLowerCase() !== 'zip' &&
-            !dwv.utils.endsWith(firstName, 'DICOMDIR') &&
-            !dwv.utils.endsWith(firstName, '.dcmdir'));
-
-    // set IO
-    var loadtype = 'image';
-    loader.setDefaultCharacterSet(defaultCharacterSet);
-    loader.onloadstart = function (event) {
-      // store loader to allow abort
-      currentLoader = loader;
-      // callback
-      augmentCallbackEvent(self.onloadstart, loadtype)(event);
+  #loadData(data, loader, dataId, options) {
+    const eventInfo = {
+      dataid: dataId
     };
-    loader.onprogress = augmentCallbackEvent(self.onprogress, loadtype);
-    loader.onloaditem = augmentCallbackEvent(self.onloaditem, loadtype);
-    loader.onload = augmentCallbackEvent(self.onload, loadtype);
-    loader.onloadend = function (event) {
-      // reset current loader
-      currentLoader = null;
-      // callback
-      augmentCallbackEvent(self.onloadend, loadtype)(event);
-    };
-    loader.onerror = augmentCallbackEvent(self.onerror, loadtype);
-    loader.onabort = augmentCallbackEvent(self.onabort, loadtype);
-    // launch load
-    loader.load(data, options);
-  }
 
-  /**
-   * Load a State data.
-   *
-   * @param {Array} data Array of data to load.
-   * @param {object} loader The data loader.
-   * @param {object} options Options passed to the final loader.
-   * @private
-   */
-  function loadStateData(data, loader, options) {
-    var loadtype = 'state';
     // set callbacks
-    loader.onloadstart = augmentCallbackEvent(self.onloadstart, loadtype);
-    loader.onprogress = augmentCallbackEvent(self.onprogress, loadtype);
-    loader.onloaditem = augmentCallbackEvent(self.onloaditem, loadtype);
-    loader.onload = augmentCallbackEvent(self.onload, loadtype);
-    loader.onloadend = augmentCallbackEvent(self.onloadend, loadtype);
-    loader.onerror = augmentCallbackEvent(self.onerror, loadtype);
-    loader.onabort = augmentCallbackEvent(self.onabort, loadtype);
+    loader.onloadstart = (event) => {
+      // store loader to allow abort
+      this.#currentLoaders[dataId] = {
+        loader,
+        isFirstItem: true
+      };
+      // callback
+      this.#getFireEvent('loadstart', eventInfo)(event);
+    };
+    loader.onprogress = this.#getFireEvent('loadprogress', eventInfo);
+    loader.onloaditem = (event) => {
+      const eventInfoItem = {
+        dataid: dataId
+      };
+      if (typeof this.#currentLoaders[dataId] !== 'undefined') {
+        eventInfoItem.isfirstitem = this.#currentLoaders[dataId].isFirstItem;
+      }
+      // callback
+      this.#getFireEvent('loaditem', eventInfoItem)(event);
+      // update loader
+      if (typeof this.#currentLoaders[dataId] !== 'undefined' &&
+        this.#currentLoaders[dataId].isFirstItem) {
+        this.#currentLoaders[dataId].isFirstItem = false;
+      }
+    };
+    loader.onload = this.#getFireEvent('load', eventInfo);
+    loader.onloadend = (event) => {
+      // reset current loader
+      delete this.#currentLoaders[dataId];
+      // callback
+      this.#getFireEvent('loadend', eventInfo)(event);
+    };
+    loader.onerror = this.#getFireEvent('error', eventInfo);
+    loader.onabort = this.#getFireEvent('abort', eventInfo);
+    if (typeof loader.ontimeout !== 'undefined') {
+      loader.ontimeout = this.#getFireEvent('timeout', eventInfo);
+    }
     // launch load
-    loader.load(data, options);
+    try {
+      loader.load(data, options);
+    } catch (error) {
+      this.dispatchEvent(new CustomEvent('error', {
+        detail: {
+          dataid: dataId,
+          error
+        }
+      }));
+      this.dispatchEvent(new CustomEvent('loadend', {
+        detail: {
+          dataid: dataId
+        }
+      }));
+    }
   }
 
   /**
-   * Augment a callback event: adds loadtype to the event
-   *  passed to a callback.
+   * Get a fireEvent function that adds local information
+   * to the event value.
    *
-   * @param {object} callback The callback to update.
-   * @param {string} loadtype The loadtype property to add to the event.
-   * @returns {object} A function representing the modified callback.
+   * @param {string} type The event type to fire.
+   * @param {object} detail Local information.
+   * @returns {EventListener} A fireEvent function.
    */
-  function augmentCallbackEvent(callback, loadtype) {
-    return function (event) {
-      event.loadtype = loadtype;
-      callback(event);
-    };
+  #getFireEvent(type, detail) {
+    return ((/** @type {CustomEvent} */ event) => {
+      const allDetail = Object.assign({}, event, detail);
+      this.dispatchEvent(new CustomEvent(type, {detail: allDetail}));
+    });
   }
 
-}; // class LoadController
-
-/**
- * Handle a load start event.
- * Default does nothing.
- *
- * @param {object} _event The load start event.
- */
-dwv.LoadController.prototype.onloadstart = function (_event) {};
-/**
- * Handle a load progress event.
- * Default does nothing.
- *
- * @param {object} _event The progress event.
- */
-dwv.LoadController.prototype.onprogress = function (_event) {};
-/**
- * Handle a load event.
- * Default does nothing.
- *
- * @param {object} _event The load event fired
- *   when a file has been loaded successfully.
- */
-dwv.LoadController.prototype.onload = function (_event) {};
-/**
- * Handle a load end event.
- * Default does nothing.
- *
- * @param {object} _event The load end event fired
- *  when a file load has completed, successfully or not.
- */
-dwv.LoadController.prototype.onloadend = function (_event) {};
-/**
- * Handle an error event.
- * Default does nothing.
- *
- * @param {object} _event The error event.
- */
-dwv.LoadController.prototype.onerror = function (_event) {};
-/**
- * Handle an abort event.
- * Default does nothing.
- *
- * @param {object} _event The abort event.
- */
-dwv.LoadController.prototype.onabort = function (_event) {};
+} // class LoadController

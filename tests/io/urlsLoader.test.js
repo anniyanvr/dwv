@@ -1,269 +1,322 @@
-// namespace
-var dwv = dwv || {};
-dwv.test = dwv.test || {};
+// @vitest-environment jsdom
+import {describe, test, assert, beforeEach, afterEach} from 'vitest';
+import {UrlsLoader, urlContentTypes} from '../../src/io/urlsLoader.js';
+import {getLoaderList} from '../../src/io/loaderList.js';
+import {MockIoLoader} from './utils/mockIoLoader.js';
 
 /**
- * Tests for the 'io/urlsLoader.js' file.
+ * Test double for `XMLHttpRequest` used by `UrlsLoader`.
  */
-/** @module tests/io */
-// Do not warn if these variables were not defined before.
-/* global QUnit */
-QUnit.module('io');
+class MockXMLHttpRequest {
+  static instances = [];
+  static behaviorByUrl = {};
+  static sentUrls = [];
 
-// Image decoders (for web workers)
-dwv.image.decoderScripts = {
-  jpeg2000: '../../decoders/pdfjs/decode-jpeg2000.js',
-  'jpeg-lossless': '../../decoders/rii-mango/decode-jpegloss.js',
-  'jpeg-baseline': '../../decoders/pdfjs/decode-jpegbaseline.js',
-  rle: '../../decoders/dwv/decode-rle.js'
-};
+  readyState = 0;
+  method = null;
+  url = null;
+  async = true;
+  requestHeaders = [];
+  withCredentials = false;
+  responseType = '';
+  response = null;
+  status = 200;
+  statusText = 'OK';
+  responseURL = '';
+  onprogress = null;
+  onload = null;
+  onloadend = null;
+  onerror = null;
+  ontimeout = null;
+  onabort = null;
+  aborted = false;
 
-/**
- * Check the events of urls load
- *
- * @param {object} assert The Qunit assert object.
- * @param {string} id An id for the test.
- * @param {Array} data The data to load as a string array.
- * @param {number} nData The theoretical number of data.
- * @param {number} nDataOk The theoretical number of data with no error.
- */
-dwv.test.checkLoad = function (assert, id, data, nData, nDataOk) {
-  var done = assert.async();
+  /**
+   * Create a mock XHR instance and track it.
+   */
+  constructor() {
+    MockXMLHttpRequest.instances.push(this);
+  }
 
-  var prefix = '[' + id + '] ';
-  var nDataError = nData - nDataOk;
+  /**
+   * Simulate `XMLHttpRequest.open`.
+   *
+   * @param {string} method The HTTP method.
+   * @param {string} url The request URL.
+   * @param {boolean} async The async flag.
+   */
+  open(method, url, async) {
+    this.method = method;
+    this.url = url;
+    this.responseURL = url;
+    this.async = async;
+    this.readyState = 1;
+  }
 
-  // checks
-  var loadStartDates = [];
-  var progressDates = [];
-  var loadItemDates = [];
-  var loadDates = [];
-  var errorDates = [];
-  var abortDates = [];
-  var gotLoadEnd = false;
+  /**
+   * Simulate adding an HTTP request header.
+   *
+   * @param {string} name Header name.
+   * @param {string} value Header value.
+   */
+  setRequestHeader(name, value) {
+    this.requestHeaders.push({name, value});
+  }
 
-  // create loader
-  var loader = new dwv.io.UrlsLoader();
-  // callbacks
-  loader.onloadstart = function (/*event*/) {
-    loadStartDates.push(new Date());
-  };
-  loader.onprogress = function (/*event*/) {
-    progressDates.push(new Date());
-  };
-  loader.onloaditem = function (/*event*/) {
-    loadItemDates.push(new Date());
-  };
-  loader.onload = function (/*event*/) {
-    loadDates.push(new Date());
-  };
-  loader.onloadend = function (/*event*/) {
-    var loadEndDate = new Date();
-    assert.notOk(gotLoadEnd,
-      prefix + 'Received first load end.');
-    gotLoadEnd = true;
-
-    // check number of events
-    assert.equal(loadStartDates.length, 1,
-      prefix + 'Received one load start.');
-    if (nDataOk !== 0) {
-      assert.ok(progressDates.length > 0,
-        prefix + 'Received at least one progress.');
-    }
-    assert.equal(loadItemDates.length, nDataOk,
-      prefix + 'Received ' + nDataOk + ' load item.');
-    var nLoad = nDataError === 0 ? 1 : 0;
-    assert.equal(loadDates.length, nLoad,
-      prefix + 'Received ' + nLoad + ' load.');
-    assert.equal(errorDates.length, nDataError,
-      prefix + 'Received ' + nDataError + ' error(s).');
-    assert.equal(abortDates.length, 0,
-      prefix + 'Received 0 abort(s).');
-
-    // check start/end sequence
-    var loadStartDate = loadStartDates[0];
-    assert.ok(loadStartDate < loadEndDate,
-      prefix + 'Received start before load end.');
-
-    var firstProgressDate = null;
-    var lastProgressDate = null;
-    var firstLoadItemDate = null;
-    var lastLoadItemDate = null;
-
-    if (nDataOk !== 0) {
-      // check progress sequence
-      progressDates.sort();
-      firstProgressDate = progressDates[0];
-      lastProgressDate = progressDates[progressDates.length - 1];
-      assert.ok(loadStartDate <= firstProgressDate,
-        prefix + 'Received start before first progress.');
-      assert.ok(loadEndDate >= lastProgressDate,
-        prefix + 'Received end after last progress.');
-
-      // check load item sequence
-      loadItemDates.sort();
-      firstLoadItemDate = loadItemDates[0];
-      lastLoadItemDate = loadItemDates[loadItemDates.length - 1];
-      assert.ok(loadStartDate <= firstLoadItemDate,
-        prefix + 'Received start before first load item.');
-      assert.ok(loadEndDate >= lastLoadItemDate,
-        prefix + 'Received end after last load item.');
+  /**
+   * Simulate request execution according to configured behavior.
+   */
+  send() {
+    MockXMLHttpRequest.sentUrls.push(this.url);
+    this.readyState = 3;
+    if (typeof this.onprogress === 'function') {
+      this.onprogress({
+        lengthComputable: true,
+        loaded: 20,
+        total: 100,
+        target: this
+      });
     }
 
-    // check load or error event sequence
-    if (nDataError === 0) {
-      // load is sent if no error happened
-      var loadDate = loadDates[0];
-      assert.ok(loadStartDate <= loadDate,
-        prefix + 'Received start before load.');
-      assert.ok(loadDate >= lastProgressDate,
-        prefix + 'Received load after last progress.');
-      assert.ok(loadDate >= lastLoadItemDate,
-        prefix + 'Received load after last load item.');
-      assert.ok(loadEndDate >= loadDate,
-        prefix + 'Received end after load.');
-    } else {
-      errorDates.sort();
-      var firstErrorDate = errorDates[0];
-      var lastErrorDate = errorDates[errorDates.length - 1];
-      assert.ok(loadStartDate <= firstErrorDate,
-        prefix + 'Received start before first error.');
-      assert.ok(loadEndDate >= lastErrorDate,
-        prefix + 'Received end after last error.');
+    const behavior = MockXMLHttpRequest.behaviorByUrl[this.url] || 'success';
+    if (behavior === 'pending') {
+      return;
     }
-    // finish async test
-    done();
-  };
-  loader.onerror = function (/*event*/) {
-    errorDates.push(new Date());
-  };
-  loader.onabort = function (/*event*/) {
-    abortDates.push(new Date());
-  };
-  // launch load
-  loader.load(data);
-};
+    if (behavior === 'error') {
+      this.readyState = 4;
+      if (typeof this.onerror === 'function') {
+        this.onerror({target: this, error: new Error('mock-xhr-error')});
+      }
+      if (typeof this.onloadend === 'function') {
+        this.onloadend({target: this});
+      }
+      return;
+    }
+    if (behavior === 'timeout') {
+      this.readyState = 4;
+      if (typeof this.ontimeout === 'function') {
+        this.ontimeout({target: this});
+      }
+      if (typeof this.onloadend === 'function') {
+        this.onloadend({target: this});
+      }
+      return;
+    }
+    if (behavior === 'http-error') {
+      this.status = 404;
+      this.statusText = 'Not Found';
+      this.response = null;
+      this.readyState = 4;
+      if (typeof this.onload === 'function') {
+        this.onload({target: this});
+      }
+      if (typeof this.onloadend === 'function') {
+        this.onloadend({target: this});
+      }
+      return;
+    }
 
-/**
- * Tests for {@link dwv.io.UrlsLoader} events with single frame data.
- *
- * @function module:tests/io~UrlsLoader0
- */
-QUnit.test('Test UrlsLoader events for single frame.', function (assert) {
-  // #0: 2 good dicom
-  var data0 = [
-    '/tests/data/bbmri-53323131.dcm',
-    '/tests/data/bbmri-53323275.dcm',
-  ];
-  var nData0 = data0.length;
-  var nDataOk0 = nData0;
-  dwv.test.checkLoad(assert, '0', data0, nData0, nDataOk0);
+    this.status = 200;
+    this.statusText = 'OK';
+    this.response = this.responseType === 'arraybuffer'
+      ? new ArrayBuffer(8) : `body:${this.url}`;
+    this.readyState = 4;
+    if (typeof this.onload === 'function') {
+      this.onload({target: this});
+    }
+    if (typeof this.onloadend === 'function') {
+      this.onloadend({target: this});
+    }
+  }
 
-  // #1: 2 not found (404) dicom
-  var data1 = [
-    '/a.dcm',
-    '/b.dcm',
-  ];
-  var nData1 = data1.length;
-  var nDataOk1 = 0;
-  dwv.test.checkLoad(assert, '1', data1, nData1, nDataOk1);
+  /**
+   * Simulate aborting an in-flight request.
+   */
+  abort() {
+    this.aborted = true;
+    this.readyState = 4;
+    if (typeof this.onabort === 'function') {
+      this.onabort({target: this});
+    }
+    if (typeof this.onloadend === 'function') {
+      this.onloadend({target: this});
+    }
+  }
+}
 
-  // #2: 2 dicom, 1 not found (404, error in XHR request)
-  var data2 = [
-    '/tests/data/bbmri-53323131.dcm',
-    '/b.dcm',
-  ];
-  var nData2 = data2.length;
-  var nDataOk2 = 1;
-  dwv.test.checkLoad(assert, '2', data2, nData2, nDataOk2);
+describe('io', () => {
+  const originalXHR = globalThis.XMLHttpRequest;
+  const loaderList = getLoaderList();
+  const originalLoaderList = [...loaderList];
 
-  // #3: 2 dicom, 1 bad (no rows, error in loader)
-  var data3 = [
-    '/tests/data/dwv-test-simple.dcm',
-    '/tests/data/dwv-test_no-number-rows.dcm',
-  ];
-  var nData3 = data3.length;
-  var nDataOk3 = 1;
-  dwv.test.checkLoad(assert, '3', data3, nData3, nDataOk3);
-});
+  beforeEach(() => {
+    MockIoLoader.reset();
+    MockIoLoader.readAsType = urlContentTypes.Text;
+    MockXMLHttpRequest.instances = [];
+    MockXMLHttpRequest.behaviorByUrl = {};
+    MockXMLHttpRequest.sentUrls = [];
 
-/**
- * Tests for {@link dwv.io.UrlsLoader} events with multi frame data.
- *
- * @function module:tests/io~UrlsLoader1
- */
-QUnit.test('Test UrlsLoader events for multi frame.', function (assert) {
-  // #0: simple multi frame
-  var data0 = [
-    '/tests/data/multiframe-test1.dcm',
-  ];
-  var nData0 = data0.length;
-  var nDataOk0 = nData0;
-  dwv.test.checkLoad(assert, '0', data0, nData0, nDataOk0);
+    loaderList.splice(0, loaderList.length, MockIoLoader);
+    globalThis.XMLHttpRequest = MockXMLHttpRequest;
+  });
 
-  // #1: encoded multi frame
-  // TODO seems to cause problems to phantomjs...
-  /*var data1 = [
-        "/tests/data/multiframe-jpegloss-ge.dcm",
-    ];
-    var nData1 = data1.length;
-    var nDataOk1 = nData1;
-    dwv.test.checkLoad(assert, "1", data1, nData1, nDataOk1);*/
-});
+  afterEach(() => {
+    loaderList.splice(0, loaderList.length, ...originalLoaderList);
+    globalThis.XMLHttpRequest = originalXHR;
+  });
 
-/**
- * Tests for {@link dwv.io.UrlsLoader} events with zipped data.
- *
- * @function module:tests/io~UrlsLoader2
- */
-QUnit.test('Test UrlsLoader events for zipped data.', function (assert) {
-  // #0: simple zip
-  var data0 = [
-    '/tests/data/bbmri.zip',
-  ];
-  var nData0 = 2;
-  var nDataOk0 = 2;
-  dwv.test.checkLoad(assert, '0', data0, nData0, nDataOk0);
+  test('load throws when no matching loader is found', () => {
+    const loader = new UrlsLoader();
+    const urls = ['https://host/data.bad'];
 
-  // #1: bad link to zip
-  var data1 = [
-    '/tests/data/a.zip',
-  ];
-  var nData1 = 1;
-  var nDataOk1 = 0;
-  dwv.test.checkLoad(assert, '1', data1, nData1, nDataOk1);
+    assert.throws(
+      () => loader.load(urls),
+      'No loader found for url: https://host/data.bad'
+    );
+  });
 
-  // #2: zip with erroneus data
-  var data2 = [
-    '/tests/data/dwv-test_bad.zip',
-  ];
-  var nData2 = 2;
-  var nDataOk2 = 1;
-  dwv.test.checkLoad(assert, '2', data2, nData2, nDataOk2);
-});
+  test('load requests urls and fires aggregate events', () => {
+    const loader = new UrlsLoader();
+    loader.setDefaultCharacterSet('ISO_IR 100');
 
-/**
- * Tests for {@link dwv.io.UrlsLoader} events with DCMDIR data.
- *
- * @function module:tests/io~UrlsLoader3
- */
-QUnit.test('Test UrlsLoader events for DCMDIR data.', function (assert) {
-  // #0: simple DCMDIR
-  var data0 = [
-    '/tests/data/bbmri.dcmdir',
-  ];
-  var nData0 = 4;
-  var nDataOk0 = 4;
-  dwv.test.checkLoad(assert, '0', data0, nData0, nDataOk0);
+    let loadStartEvent = null;
+    let loadEvent = null;
+    let loadEndEvent = null;
+    loader.onloadstart = (event) => {
+      loadStartEvent = event;
+    };
+    loader.onload = (event) => {
+      loadEvent = event;
+    };
+    loader.onloadend = (event) => {
+      loadEndEvent = event;
+    };
 
-  // #1: bad link to DCMDIR
-  var data1 = [
-    '/tests/data/a.dcmdir',
-  ];
-  var nData1 = 1;
-  var nDataOk1 = 0;
-  dwv.test.checkLoad(assert, '1', data1, nData1, nDataOk1);
+    const urls = ['https://host/a.ok', 'https://host/b.ok'];
+    loader.load(urls, {batchSize: 1});
 
-  // #2: DCMDIR with bad links -> TODO
-  // #3: DCMDIR with erroneus data -> TODO
+    assert.equal(MockXMLHttpRequest.sentUrls.length, 2);
+    assert.deepEqual(MockXMLHttpRequest.sentUrls, urls);
+    assert.equal(MockIoLoader.instances.length, 1);
+    assert.equal(MockIoLoader.instances[0].options.numberOfItems, 2);
+    assert.equal(
+      MockIoLoader.instances[0].options.defaultCharacterSet,
+      'ISO_IR 100'
+    );
+
+    assert.ok(loadStartEvent);
+    assert.equal(loadStartEvent.source, urls);
+    assert.ok(loadEvent);
+    assert.equal(loadEvent.source, urls);
+    assert.ok(loadEndEvent);
+    assert.equal(loadEndEvent.source, urls);
+  });
+
+  test('load applies request options and arraybuffer response type', () => {
+    const loader = new UrlsLoader();
+    const urls = ['https://host/a.ok'];
+    MockIoLoader.readAsType = urlContentTypes.ArrayBuffer;
+
+    loader.load(urls, {
+      requestHeaders: [
+        {name: 'Accept', value: 'application/dicom'},
+        {name: 'X-Test', value: '1'}
+      ],
+      withCredentials: true
+    });
+
+    assert.equal(MockXMLHttpRequest.instances.length, 1);
+    const request = MockXMLHttpRequest.instances[0];
+    assert.equal(request.method, 'GET');
+    assert.equal(request.url, urls[0]);
+    assert.equal(request.withCredentials, true);
+    assert.equal(request.responseType, 'arraybuffer');
+    assert.deepEqual(request.requestHeaders, [
+      {name: 'Accept', value: 'application/dicom'},
+      {name: 'X-Test', value: '1'}
+    ]);
+  });
+
+  test('http status error triggers onerror with formatted message', () => {
+    const loader = new UrlsLoader();
+    const url = 'https://host/a.ok';
+    MockXMLHttpRequest.behaviorByUrl[url] = 'http-error';
+
+    let errorEvent = null;
+    let gotLoad = false;
+    let loadEndEvent = null;
+    loader.onerror = (event) => {
+      errorEvent = event;
+    };
+    loader.onload = () => {
+      gotLoad = true;
+    };
+    loader.onloadend = (event) => {
+      loadEndEvent = event;
+    };
+
+    loader.load([url]);
+
+    assert.ok(errorEvent);
+    assert.equal(errorEvent.source, url);
+    assert.equal(errorEvent.error, 'GET https://host/a.ok 404 (Not Found)');
+    assert.notOk(gotLoad);
+    assert.ok(loadEndEvent);
+  });
+
+  test('load throws for mixed url types', () => {
+    const loader = new UrlsLoader();
+    const urls = ['https://host/a.ok', 'https://host/b.bad'];
+
+    assert.throws(
+      () => loader.load(urls),
+      'Input url of different type: https://host/b.bad'
+    );
+  });
+
+  test('abort aborts pending requests and running loader', () => {
+    const loader = new UrlsLoader();
+    const urls = ['https://host/a.ok', 'https://host/b.ok'];
+    MockXMLHttpRequest.behaviorByUrl[urls[0]] = 'pending';
+    MockXMLHttpRequest.behaviorByUrl[urls[1]] = 'pending';
+    MockIoLoader.initialLoadingState = true;
+
+    let abortEvent = null;
+    loader.onabort = (event) => {
+      abortEvent = event;
+    };
+
+    loader.load(urls);
+    loader.abort();
+
+    assert.equal(MockXMLHttpRequest.instances.length, 2);
+    assert.ok(MockXMLHttpRequest.instances[0].aborted);
+    assert.ok(MockXMLHttpRequest.instances[1].aborted);
+    assert.ok(MockIoLoader.instances[0].abortCalled);
+    assert.ok(abortEvent);
+    assert.equal(abortEvent.source, urls[1]);
+  });
+
+  test('DICOMDIR request error forwards source and ends load', () => {
+    const loader = new UrlsLoader();
+    const dicomDirUrl = 'https://host/DICOMDIR';
+    MockXMLHttpRequest.behaviorByUrl[dicomDirUrl] = 'error';
+
+    let errorEvent = null;
+    let loadEndEvent = null;
+    loader.onerror = (event) => {
+      errorEvent = event;
+    };
+    loader.onloadend = (event) => {
+      loadEndEvent = event;
+    };
+
+    loader.load([dicomDirUrl]);
+
+    assert.equal(MockXMLHttpRequest.instances.length, 1);
+    assert.equal(MockXMLHttpRequest.instances[0].responseType, 'arraybuffer');
+    assert.ok(errorEvent);
+    assert.equal(errorEvent.source, dicomDirUrl);
+    assert.ok(loadEndEvent);
+  });
 });

@@ -1,66 +1,31 @@
-/**
- * Tests for the 'utils/i18n' file.
- */
-/** @module tests/utils */
-// Do not warn if these variables were not defined before.
-/* global QUnit */
-QUnit.module('i18n');
+import {describe, test, assert} from 'vitest';
+import {i18n} from '../../src/utils/i18n.js';
 
 /**
- * Initialise i18n and check it.
- *
- * @param {string} language The test language.
- * @param {Array} keys The language keys.
- * @param {Function} assert The QUnit assert.
+ * Tests for the 'utils/colour' file.
  */
-function checkLanguage(language, keys, assert) {
-  var done = assert.async();
-  // fail test if load fails
-  dwv.i18nOnFailedLoad(function (lng /*, ns, msg*/) {
-    assert.ok(false, 'Failed loading \'' + lng + '\' language.');
-    // stop linstening
-    dwv.i18nOffFailedLoad();
-    // finish async test
-    done();
+
+describe('utils', () => {
+
+  /**
+   * Tests for {@link i18n}.
+   *
+   * @function module:tests/utils~i18n
+   */
+  test('i18n', () => {
+    const t0 = i18n.t('unit.mm');
+    assert.equal(t0, 'mm', 'test #0');
+
+    const t1 = i18n.t('unitt.mm');
+    assert.equal(t1, 'unitt.mm', 'test #1');
+
+    const t2 = i18n.t('unit.cm');
+    assert.equal(t2, undefined, 'test #2');
+
+    // volume id units
+    assert.equal(i18n.t('unit.ms'), 'ms', 'milliseconds');
+    assert.equal(i18n.t('unit.s'), 's', 'seconds');
+    assert.equal(i18n.t('unit.smm2'), 's/mm²', 'b-value');
   });
-  // test once initialised
-  dwv.i18nOnInitialised(function (/*options*/) {
-    // stop linstening
-    dwv.i18nOffInitialised();
-    // check some values
-    for (var i = 0; i < keys.length; ++i) {
-      assert.equal(
-        dwv.i18nExists(keys[i][0]),
-        true,
-        'i18n ' + language + ' translation exists');
-      assert.equal(
-        dwv.i18n(keys[i][0]),
-        keys[i][1],
-        'i18n ' + language + ' translation is ok');
-    }
-    // finish async test
-    done();
-  });
-  // initialise with input language
-  dwv.i18nInitialise(language, '..');
-}
 
-/**
- * Tests for {@link dwv.i18n} with en language.
- *
- * @function module:tests/utils~i18nEn
- */
-QUnit.test('Test i18n en.', function (assert) {
-  var keys = [['basics.open', 'Open'], ['basics.close', 'Close']];
-  checkLanguage('en', keys, assert);
-});
-
-/**
- * Tests for {@link dwv.i18n} with fr language.
- *
- * @function module:tests/utils~i18nFr
- */
-QUnit.test('Test i18n fr.', function (assert) {
-  var keys = [['basics.open', 'Ouvrir'], ['basics.close', 'Fermer']];
-  checkLanguage('fr', keys, assert);
 });

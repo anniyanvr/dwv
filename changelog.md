@@ -1,5 +1,536 @@
 # Changelog
 
+## [v0.36.4](https://github.com/ivmartel/dwv/releases/tag/v0.36.4) - 05/08/2026
+
+### Fixed
+
+- Allow for different SeriesTime in image append check [#2257](https://github.com/ivmartel/dwv/issues/2257)
+
+---
+
+## [v0.36.3](https://github.com/ivmartel/dwv/releases/tag/v0.36.3) - 26/05/2026
+
+### Fixed
+
+- Tolerance is too small for render check [#2185](https://github.com/ivmartel/dwv/issues/2185)
+
+---
+
+## [v0.36.2](https://github.com/ivmartel/dwv/releases/tag/v0.36.2) - 26/03/2026
+
+### Fixed
+
+- Wrong output typed array for jpeg 2000 and baseline compressed data [#2127](https://github.com/ivmartel/dwv/issues/2127)
+
+---
+
+## [v0.36.1](https://github.com/ivmartel/dwv/releases/tag/v0.36.1) - 20/02/2026
+
+### Fixed
+
+- Close annotation on mouse out [#2088](https://github.com/ivmartel/dwv/issues/2088)
+- Bound annotation drawing to view [#2083](https://github.com/ivmartel/dwv/issues/2083)
+- Missing quantification in annotation SR [#2090](https://github.com/ivmartel/dwv/issues/2090)
+
+---
+
+## [v0.36.0](https://github.com/ivmartel/dwv/releases/tag/v0.36.0) - 05/02/2026
+
+### Added
+
+- Add info layer [#2064](https://github.com/ivmartel/dwv/issues/2064)
+- Migrate testing from Karma to Vitest [#2041](https://github.com/ivmartel/dwv/issues/2041)
+- Switch to yarn v4 [#2040](https://github.com/ivmartel/dwv/issues/2040)
+- Stop storing build with git [#2035](https://github.com/ivmartel/dwv/issues/2035)
+- Add default volume id getter methods [#2014](https://github.com/ivmartel/dwv/issues/2014)
+- Allow to resample 4D data [#2013](https://github.com/ivmartel/dwv/issues/2013)
+- Feature: Add functionality to calculate segmentation overlap [#2010](https://github.com/ivmartel/dwv/issues/2010)
+- Allow for post load image creation for multi volume [#2008](https://github.com/ivmartel/dwv/issues/2008)
+- Rename getTagTime method [#2007](https://github.com/ivmartel/dwv/issues/2007)
+- Deprecate loadFromUri and expose urls extraction code [#2004](https://github.com/ivmartel/dwv/issues/2004)
+- Remove support for loading state files from key-value uri [#2003](https://github.com/ivmartel/dwv/issues/2003)
+- Feature: Display the contour of segmentations [#2002](https://github.com/ivmartel/dwv/issues/2002)
+- Feature: Calculate the diameters of segmentations [#2000](https://github.com/ivmartel/dwv/issues/2000)
+- Compensate for magnification factor in X-ray images [#1996](https://github.com/ivmartel/dwv/issues/1996)
+- Get spacing from multi-frame functional groups [#1995](https://github.com/ivmartel/dwv/issues/1995)
+- Prevent overlay of data with different orientations [#1983](https://github.com/ivmartel/dwv/issues/1983)
+- Resampling and Series Alignment [#1919](https://github.com/ivmartel/dwv/issues/1919)
+
+### Fixed
+
+- Brush erase undo keeps previous contours [#2015](https://github.com/ivmartel/dwv/issues/2015)
+- Image clone linked to original [#2006](https://github.com/ivmartel/dwv/issues/2006)
+- Brush randomly not painting at creation [#1999](https://github.com/ivmartel/dwv/issues/1999)
+- Bug: imagePosPat (Image Position Patient) incorrectly set to ImageOrientationPatient in Brush tool [#1998](https://github.com/ivmartel/dwv/issues/1998)
+- Wrong unit for data with pixel aspect ratio [#1997](https://github.com/ivmartel/dwv/issues/1997)
+- Wrong size for secondary capture [#1994](https://github.com/ivmartel/dwv/issues/1994)
+- Bug: Secondary Capture images will incorrectly try to sync zoom/pan/slice when loaded along-side scans [#1975](https://github.com/ivmartel/dwv/issues/1975)
+- Bug: Incorrect spacing when loading an overlay on an MPR orientation [#1969](https://github.com/ivmartel/dwv/issues/1969)
+
+---
+
+## [v0.35.1](https://github.com/ivmartel/dwv/releases/tag/v0.35.1) - 02/07/2025
+
+### Fixed
+
+- Workers have to be in root '/assets' [#1968](https://github.com/ivmartel/dwv/issues/1968)
+- Doc examples not working [#1967](https://github.com/ivmartel/dwv/issues/1967)
+
+---
+
+## [v0.35.0](https://github.com/ivmartel/dwv/releases/tag/v0.35.0) - 27/06/2025
+
+### Added
+
+- Use pixel unitt for data without pixel spacing [#1941](https://github.com/ivmartel/dwv/issues/1941)
+- Add support for VOI LUT functions [#1935](https://github.com/ivmartel/dwv/issues/1935)
+- Use reference geometry for seg [#1922](https://github.com/ivmartel/dwv/issues/1922)
+- Output ESM bundle [#1905](https://github.com/ivmartel/dwv/issues/1905)
+- Use ProcedureEvidence instead of ref series [#1904](https://github.com/ivmartel/dwv/issues/1904)
+- Add file extension to imports [#1903](https://github.com/ivmartel/dwv/issues/1903)
+- Update webpack config to expose web workers [#1900](https://github.com/ivmartel/dwv/issues/1900)
+- Window/Level tool enhancements [#1896](https://github.com/ivmartel/dwv/issues/1896)
+- Add mask centroid calculation [#1895](https://github.com/ivmartel/dwv/issues/1895)
+- Add mask volume quantification [#1894](https://github.com/ivmartel/dwv/issues/1894)
+- Improve handling of "image data missing" condition [#1890](https://github.com/ivmartel/dwv/issues/1890)
+- Follow TID1500 for annotation DICOM SR [#1887](https://github.com/ivmartel/dwv/issues/1887)
+- Remove warning for LIP orientation [#1882](https://github.com/ivmartel/dwv/issues/1882)
+- Change draw blacklist into more generic validation [#1880](https://github.com/ivmartel/dwv/issues/1880)
+- Add meta data to annotations [#1876](https://github.com/ivmartel/dwv/issues/1876)
+- Add brush tool [#1870](https://github.com/ivmartel/dwv/issues/1870)
+- Change loaditem and dataadd/dataupdate event order [#1861](https://github.com/ivmartel/dwv/issues/1861)
+- App load methods return loadid [#1860](https://github.com/ivmartel/dwv/issues/1860)
+- Make UndoStack extend EventTarget [#1853](https://github.com/ivmartel/dwv/issues/1853)
+- Only one active layer [#1845](https://github.com/ivmartel/dwv/issues/1845)
+- Allow to listen for request timeout [#1832](https://github.com/ivmartel/dwv/issues/1832)
+- Move overridable properties to single 'custom' object [#1831](https://github.com/ivmartel/dwv/issues/1831)
+- Scroll use minimum resolution [#1821](https://github.com/ivmartel/dwv/issues/1821)
+- Add untilTag to dicom parser [#1814](https://github.com/ivmartel/dwv/issues/1814)
+- Add decoders code to dist [#1802](https://github.com/ivmartel/dwv/issues/1802)
+- Support same colour segments [#1800](https://github.com/ivmartel/dwv/issues/1800)
+
+### Fixed
+
+- Bug: Creating a new segmentation mask on an MPR view will draw on the wrong slice [#1954](https://github.com/ivmartel/dwv/issues/1954)
+- [bug] Baby MRI with state image is not displayed [#1953](https://github.com/ivmartel/dwv/issues/1953)
+- [bug] Error message appears in MPR mode [#1952](https://github.com/ivmartel/dwv/issues/1952)
+- [bug] Error message while clicking on the viewer after selecting Side by Side layout [#1950](https://github.com/ivmartel/dwv/issues/1950)
+- [bug] Error message while opening Toutatics series [#1949](https://github.com/ivmartel/dwv/issues/1949)
+- Revert upgrade to typescript >5.7 [#1945](https://github.com/ivmartel/dwv/issues/1945)
+- Error 'Cannot write boolean array as binary’ when writing DICOM seg [#1926](https://github.com/ivmartel/dwv/issues/1926)
+- Error while writing pixel data stored in sequence [#1891](https://github.com/ivmartel/dwv/issues/1891)
+- Number precision related error [#1885](https://github.com/ivmartel/dwv/issues/1885)
+- Error loading when orientation is decimals different among slices of a series [#1877](https://github.com/ivmartel/dwv/issues/1877)
+- Field of view change on viewer resize [#1864](https://github.com/ivmartel/dwv/issues/1864)
+- Handle DICOM seg segments without recommended display [#1863](https://github.com/ivmartel/dwv/issues/1863)
+- Wrong merge size in mergeGeometries [#1846](https://github.com/ivmartel/dwv/issues/1846)
+- Annotation quantification change on view update [#1842](https://github.com/ivmartel/dwv/issues/1842)
+
+---
+
+## [v0.34.2](https://github.com/ivmartel/dwv/releases/tag/v0.34.2) - 03/02/2025
+
+### Fixed
+
+- ROI centroid calculation error [#1888](https://github.com/ivmartel/dwv/issues/1855)
+- Floodfill and livewire can only create one shape [#1854](https://github.com/ivmartel/dwv/issues/1854)
+
+---
+
+## [v0.34.1](https://github.com/ivmartel/dwv/releases/tag/v0.34.1) - 05/12/2024
+
+### Fixed
+
+- Cannot annotate on raw image (jpg, png...) [#1813](https://github.com/ivmartel/dwv/issues/1813)
+- Annotation update always updates quantification [#1820](https://github.com/ivmartel/dwv/issues/1820)
+- New annotation cannot be moved after loading another [#1819](https://github.com/ivmartel/dwv/issues/1819)
+
+---
+
+## [v0.34.0](https://github.com/ivmartel/dwv/releases/tag/v0.34.0) - 14/11/2024
+
+### Added
+
+- Add connector between shape and label [#1795](https://github.com/ivmartel/dwv/issues/1795)
+- Default draw auto shape color to false [#1768](https://github.com/ivmartel/dwv/issues/1768)
+- Export toolOptions to allow for custom tool options [#1718](https://github.com/ivmartel/dwv/issues/1718)
+- Allow to move roi label independently [#1690](https://github.com/ivmartel/dwv/issues/1690)
+- Add DICOM SR parsing [#1689](https://github.com/ivmartel/dwv/issues/1689)
+- Add missing position to draw display details [#1521](https://github.com/ivmartel/dwv/issues/1521)
+- Use DICOM to store annotations [#1020](https://github.com/ivmartel/dwv/issues/1020)
+
+### Fixed
+
+- Fixed label moves on drag out of bounds [#1770](https://github.com/ivmartel/dwv/issues/1770)
+- Wrong display if adding data after zoom [#1606](https://github.com/ivmartel/dwv/issues/1606)
+
+---
+
+## [v0.33.1](https://github.com/ivmartel/dwv/releases/tag/v0.33.1) - 13/06/2024
+
+### Fixed
+
+- Wrong slice spacing for DICOM Seg [#1677](https://github.com/ivmartel/dwv/issues/1677)
+
+## [v0.33.0](https://github.com/ivmartel/dwv/releases/tag/v0.33.0) - 06/06/2024
+
+### Added
+
+- Add set position to zoom tool [#1675](https://github.com/ivmartel/dwv/issues/1675)
+- Allow to specify the root html document [#1670](https://github.com/ivmartel/dwv/issues/1670)
+- Revise image spacing calculation [#1651](https://github.com/ivmartel/dwv/issues/1651)
+- Cast value for UN tag write fix [#1645](https://github.com/ivmartel/dwv/issues/1645)
+- Allow to deactivate UN tags fixing [#1642](https://github.com/ivmartel/dwv/issues/1642)
+- Add url load 'forceLoader' option [#1629](https://github.com/ivmartel/dwv/issues/1629)
+- Check number of frames value before adding dimension [#1615](https://github.com/ivmartel/dwv/issues/1615)
+- Relax Accept header test for canLoadUrl methods [#1614](https://github.com/ivmartel/dwv/issues/1614)
+- Allow scroll if at least one data of the layerGroup can [#1593](https://github.com/ivmartel/dwv/issues/1593)
+- Allow to deactivate draw shortcuts [#1579](https://github.com/ivmartel/dwv/issues/1579)
+- Allow to abort individual load [#1572](https://github.com/ivmartel/dwv/issues/1572)
+- Allow to add missing tags while writing DICOM [#1561](https://github.com/ivmartel/dwv/issues/1561)
+- Remove mouse and touch event position calculation [#1559](https://github.com/ivmartel/dwv/issues/1559)
+- Add tags to image meta data [#1557](https://github.com/ivmartel/dwv/issues/1557)
+- Rename WindowCenterAndWidth to voiLut [#1554](https://github.com/ivmartel/dwv/issues/1554)
+- Rename rescaleLut to modalityLut [#1553](https://github.com/ivmartel/dwv/issues/1553)
+- Allow to check image UIDs [#1550](https://github.com/ivmartel/dwv/issues/1550)
+- Move label to bellow shape for circle and ellipse [#1539](https://github.com/ivmartel/dwv/issues/1539)
+- Change draw colour according to layer [#1537](https://github.com/ivmartel/dwv/issues/1537)
+- Add srclayerid to draw events [#1531](https://github.com/ivmartel/dwv/issues/1531)
+- Store window/level in data view config [#1526](https://github.com/ivmartel/dwv/issues/1526)
+- Change 'loaderror' and 'loadabort' event type [#1524](https://github.com/ivmartel/dwv/issues/1524)
+- No loadend event when http requests fails [#1522](https://github.com/ivmartel/dwv/issues/1522)
+- Store image smoothing setting for future layers [#1519](https://github.com/ivmartel/dwv/issues/1519)
+- Send delete draw events on layer delete [#1518](https://github.com/ivmartel/dwv/issues/1518)
+- Store current opacity and colour map in data view config [#1517](https://github.com/ivmartel/dwv/issues/1517)
+- Add window level type [#1515](https://github.com/ivmartel/dwv/issues/1515)
+- Add a colour map binder [#1508](https://github.com/ivmartel/dwv/issues/1508)
+- Do not synchronise opacity if only one layer [#1506](https://github.com/ivmartel/dwv/issues/1506)
+- Add support for writing DICOM with unknown VR [#1505](https://github.com/ivmartel/dwv/issues/1505)
+- Set colour map by name in ViewConfig [#1499](https://github.com/ivmartel/dwv/issues/1499)
+- Add units to draw quantification [#1489](https://github.com/ivmartel/dwv/issues/1489)
+- Export draw controller type [#1488](https://github.com/ivmartel/dwv/issues/1488)
+- Add opacity to dataViewConfig [#1464](https://github.com/ivmartel/dwv/issues/1464)
+- Allow to change image smoothing from the app [#1463](https://github.com/ivmartel/dwv/issues/1463)
+- Use string dataid, replace loadid with dataid [#1460](https://github.com/ivmartel/dwv/issues/1460)
+- Add data index to draw events [#1457](https://github.com/ivmartel/dwv/issues/1457)
+- Make scroll an option of the draw tool [#1456](https://github.com/ivmartel/dwv/issues/1456)
+- Allow to set the active layer group [#1455](https://github.com/ivmartel/dwv/issues/1455)
+- Make default properties available in shape quant [#1434](https://github.com/ivmartel/dwv/issues/1434)
+- Allow to add and remove view configuration [#1431](https://github.com/ivmartel/dwv/issues/1431)
+- Allow to override shape label text [#1429](https://github.com/ivmartel/dwv/issues/1429)
+- Add support for PET SUV [#1418](https://github.com/ivmartel/dwv/issues/1418)
+- Decouple data rescaling and view windowing [#1406](https://github.com/ivmartel/dwv/issues/1406)
+- Add API to help with information overlay [#1383](https://github.com/ivmartel/dwv/issues/1383)
+- Add support for writing DICOM seg [#1128](https://github.com/ivmartel/dwv/issues/1128)
+
+### Fixed
+
+- Overlay on zoomed layer [#1674](https://github.com/ivmartel/dwv/issues/1674)
+- Wrong circle and ellipse quantification values for oriented views [#1662](https://github.com/ivmartel/dwv/issues/1662)
+- Fix scroll sensitivity [#1634](https://github.com/ivmartel/dwv/issues/1634)
+- Writer replace tags fails for implicit data [#1607](https://github.com/ivmartel/dwv/issues/1607)
+- Fix anisotropic DICOM seg support [#1602](https://github.com/ivmartel/dwv/issues/1602)
+- Fix abort [#1573](https://github.com/ivmartel/dwv/issues/1573)
+- VR=xs breaks data writing [#1567](https://github.com/ivmartel/dwv/issues/1567)
+- VR=OB and bitsAllocated=16 breaks data writing [#1566](https://github.com/ivmartel/dwv/issues/1566)
+- `getIndexFromStringId` does not handle X only index [#1562](https://github.com/ivmartel/dwv/issues/1562)
+- Wrong anchor position on circle edit undo [#1540](https://github.com/ivmartel/dwv/issues/1540)
+- View shift on resize of an MPR view [#1535](https://github.com/ivmartel/dwv/issues/1535)
+- TypeError: Cannot set property type of [object Event]... [#1523](https://github.com/ivmartel/dwv/issues/1523)
+- Crosshair gets out of layer [#1494](https://github.com/ivmartel/dwv/issues/1494)
+- Draws move on resize [#1493](https://github.com/ivmartel/dwv/issues/1493)
+- Error when moving anchor out of canvas [#1492](https://github.com/ivmartel/dwv/issues/1492)
+- Shape does not follow roi anchors  [#1491](https://github.com/ivmartel/dwv/issues/1491)
+- Wrong measurements in MPR views [#1473](https://github.com/ivmartel/dwv/issues/1473)
+- Draw deletion in MPR [#1468](https://github.com/ivmartel/dwv/issues/1468)
+- Image offset and oriented incorrectly [#1459](https://github.com/ivmartel/dwv/issues/1459)
+- data change bug in viewer [#1424](https://github.com/ivmartel/dwv/issues/1424)
+- drawlayer bug when changing data view [#1423](https://github.com/ivmartel/dwv/issues/1423)
+- Bad transfer syntax for data with no DCIM prefix [#1416](https://github.com/ivmartel/dwv/issues/1416)
+- Image data range and rescaled range are not correct [#1404](https://github.com/ivmartel/dwv/issues/1404)
+
+---
+
+## [v0.32.6](https://github.com/ivmartel/dwv/releases/tag/v0.32.6) - 17/04/2024
+
+### Fixed
+
+- Fix npm publish [#1656](https://github.com/ivmartel/dwv/issues/1656)
+
+## [v0.32.5](https://github.com/ivmartel/dwv/releases/tag/v0.32.5) - 17/04/2024
+
+### Fixed
+
+- Image does not completely fill div [#1655](https://github.com/ivmartel/dwv/issues/1655)
+
+## [v0.32.4](https://github.com/ivmartel/dwv/releases/tag/v0.32.4) - 18/03/2024
+
+### Fixed
+
+- event.preventDefault for wheel events [#1632](https://github.com/ivmartel/dwv/issues/1632)
+
+## [v0.32.3](https://github.com/ivmartel/dwv/releases/tag/v0.32.3) - 22/09/2023
+
+### Added
+
+- Add support for writing DICOM with unknown VR [#1507](https://github.com/ivmartel/dwv/issues/1481)
+
+## [v0.32.2](https://github.com/ivmartel/dwv/releases/tag/v0.32.2) - 04/09/2023
+
+### Added
+
+- Add app options type  [#1481](https://github.com/ivmartel/dwv/issues/1481)
+- Add data element type [#1474](https://github.com/ivmartel/dwv/issues/1474)
+- Export luts as plural not singular [#1478](https://github.com/ivmartel/dwv/issues/1478)
+- Add data view config type [#1475](https://github.com/ivmartel/dwv/issues/1475)
+- Use File[] and not Filelist [#1476](https://github.com/ivmartel/dwv/issues/1476)
+
+## [v0.32.1](https://github.com/ivmartel/dwv/releases/tag/v0.32.1) - 19/06/2023
+
+### Added
+
+- Update API to provide image creation and state apply [#1410](https://github.com/ivmartel/dwv/issues/1410)
+- Change babel configuration [#1409](https://github.com/ivmartel/dwv/issues/1409)
+
+### Fixed
+
+- Uncaught TypeError: t.findOne is not a function [#1392](https://github.com/ivmartel/dwv/issues/1392)
+
+---
+
+## [v0.32.0](https://github.com/ivmartel/dwv/releases/tag/v0.32.0) - 02/06/2023
+
+### Added
+
+- Make dwv importable as an es6 module [#399](https://github.com/ivmartel/dwv/issues/399)
+- typings [#669](https://github.com/ivmartel/dwv/issues/669)
+- Follow DICOM json standard [#1071](https://github.com/ivmartel/dwv/issues/1071)
+
+### Fixed
+
+- Unknown VR breaks code [#1325](https://github.com/ivmartel/dwv/issues/1325)
+
+---
+
+## [v0.31.2](https://github.com/ivmartel/dwv/releases/tag/v0.31.2) - 07/05/2023
+
+### Fixed
+
+- Cannot run thread after stop [#1358](https://github.com/ivmartel/dwv/issues/1358)
+- Error in objectToArray [#1354](https://github.com/ivmartel/dwv/issues/1354)
+
+### Added
+
+- Add source to dicom load errors [#1355](https://github.com/ivmartel/dwv/issues/1355)
+
+---
+
+## [v0.31.1](https://github.com/ivmartel/dwv/releases/tag/v0.31.1) - 27/04/2023
+
+### Fixed
+
+- MPR bad offset when loading larger data [#1348](https://github.com/ivmartel/dwv/issues/1348)
+- DICOM seg loading failure 'Test distance is increasing' [#1347](https://github.com/ivmartel/dwv/issues/1347)
+- Error when accessing modality w/l presets [#1346](https://github.com/ivmartel/dwv/issues/1346)
+
+---
+
+## [v0.31.0](https://github.com/ivmartel/dwv/releases/tag/v0.31.0) - 07/03/2023
+
+### Added
+
+- Add support for MIME multipart content-type [#1084](https://github.com/ivmartel/dwv/issues/1084)
+- Add support for reading DICOM Seg [#932](https://github.com/ivmartel/dwv/issues/932)
+- Update dictionary to 2022a [#1219](https://github.com/ivmartel/dwv/issues/1219)
+- Add crosshair to layer groups [#1286](https://github.com/ivmartel/dwv/issues/1286)
+- Add pixel value on mouseover [#1273](https://github.com/ivmartel/dwv/issues/1273)
+
+- Remove i18next [#1320](https://github.com/ivmartel/dwv/issues/1320)
+- Allow for mouse wheel scroll in tools that do not use the mouse wheel [#1319](https://github.com/ivmartel/dwv/issues/1319)
+- Change draw shape opacity on mouse over [#1318](https://github.com/ivmartel/dwv/issues/1318)
+- Make mouse wheel scroll multi frame data [#1316](https://github.com/ivmartel/dwv/issues/1316)
+- Use event key property and not keyCode (deprecated) [#1305](https://github.com/ivmartel/dwv/issues/1305)
+- Use passive event listeners [#1304](https://github.com/ivmartel/dwv/issues/1304)
+- Send draw create/delete events when Draw tool is not selected [#1301](https://github.com/ivmartel/dwv/issues/1301)
+- Use lowest image position patient as geometry origin [#1282](https://github.com/ivmartel/dwv/issues/1282)
+- Revise layer id creation to avoid collision [#1277](https://github.com/ivmartel/dwv/issues/1277)
+- Simplify tool configuration in app.init [#1269](https://github.com/ivmartel/dwv/issues/1269)
+- Allow to set the image smoothing [#1247](https://github.com/ivmartel/dwv/issues/1247)
+- Recalculate vl at writing time [#1240](https://github.com/ivmartel/dwv/issues/1240)
+- Fix reading sequence items [#1231](https://github.com/ivmartel/dwv/issues/1231)
+- Remove vr=OW and bitsAllocated=8 warning [#1225](https://github.com/ivmartel/dwv/issues/1225)
+- Move to clean-jsdoc-theme [#1212](https://github.com/ivmartel/dwv/issues/1212)
+- Simplify Application tool API [#1203](https://github.com/ivmartel/dwv/issues/1203)
+- Add index to iterator next returned object [#1202](https://github.com/ivmartel/dwv/issues/1202)
+- Allow to override slice sorting [#1185](https://github.com/ivmartel/dwv/issues/1185)
+- Make scroll from trackpad less sensitive [#1184](https://github.com/ivmartel/dwv/issues/1184)
+- Use same pixel ratio for multiple views [#1182](https://github.com/ivmartel/dwv/issues/1182)
+- Add loadid and isfirstitem to 'loaditem' event [#1180](https://github.com/ivmartel/dwv/issues/1180)
+- Add intermediates slices when creating mask [#1176](https://github.com/ivmartel/dwv/issues/1176)
+- Fix negative index in worldToIndex [#1163](https://github.com/ivmartel/dwv/issues/1163)
+- Smaller data disapears in MPR [#1162](https://github.com/ivmartel/dwv/issues/1162)
+- Window level tool proportional to data range [#1160](https://github.com/ivmartel/dwv/issues/1160)
+- Do not throw error when no data view config [#1155](https://github.com/ivmartel/dwv/issues/1155)
+- Improve writer size calculation [#1142](https://github.com/ivmartel/dwv/issues/1142)
+- Overlay does not compensate for offset at each slice [#1133](https://github.com/ivmartel/dwv/issues/1133)
+- Avoid postion - index conversion in view [#1130](https://github.com/ivmartel/dwv/issues/1130)
+- Overlay data freezes when out of range [#1129](https://github.com/ivmartel/dwv/issues/1129)
+- Race condition for multiple loadURLs [#1121](https://github.com/ivmartel/dwv/issues/1121)
+- Move getElementsFromJSONTags to make it public [#1114](https://github.com/ivmartel/dwv/issues/1114)
+- Application fitToContainer should resize all layer groups [#1113](https://github.com/ivmartel/dwv/issues/1113)
+- Clip values in ciexyz to srgb conversion [#1112](https://github.com/ivmartel/dwv/issues/1112)
+- Replace string substr (deprecated) with substring [#1089](https://github.com/ivmartel/dwv/issues/1089)
+- Update CI to use node 16 [#1080](https://github.com/ivmartel/dwv/issues/1080)
+
+### Fixed
+
+- Fix SpecificCharacterSet when writing DICOM data [#1088](https://github.com/ivmartel/dwv/issues/1088)
+- Bad normal construction [#1264](https://github.com/ivmartel/dwv/issues/1264)
+- An exception was caught when onResize was called [#1233](https://github.com/ivmartel/dwv/issues/1233)
+- readUint64Array is not defined [#1220](https://github.com/ivmartel/dwv/issues/1220)
+- Fix tag isPrivate method [#1218](https://github.com/ivmartel/dwv/issues/1218)
+- Microsoft Edge and Google Drive data [#214](https://github.com/ivmartel/dwv/issues/214)
+
+---
+
+## [v0.30.8](https://github.com/ivmartel/dwv/releases/tag/v0.30.8) - 03/01/2022
+
+### Fixed
+
+- Load state shape does not show on correct slice [#1078](https://github.com/ivmartel/dwv/issues/1078)
+- TypeError: point.get is not a function when loading state [#1077](https://github.com/ivmartel/dwv/issues/1077)
+- Uncaught TypeError: t.getX is not a function when saving state [#1072](https://github.com/ivmartel/dwv/issues/1072)
+
+---
+
+## [v0.30.7](https://github.com/ivmartel/dwv/releases/tag/v0.30.7) - 28/12/2021
+
+### Fixed
+
+- Pinch zoom is not working [#1070](https://github.com/ivmartel/dwv/issues/1070)
+
+---
+
+## [v0.30.6](https://github.com/ivmartel/dwv/releases/tag/v0.30.6) - 20/12/2021
+
+### Fixed
+
+- Zoom does not stay centred with overlay data [#1066](https://github.com/ivmartel/dwv/issues/1066)
+- Image limit for offset overlap [#1065](https://github.com/ivmartel/dwv/issues/1065)
+
+---
+
+## [v0.30.5](https://github.com/ivmartel/dwv/releases/tag/v0.30.5) - 16/12/2021
+
+### Fixed
+
+- Allow to play multi-frame data [#1064](https://github.com/ivmartel/dwv/issues/1064)
+- Allow scroll for multi-frame data [#1063](https://github.com/ivmartel/dwv/issues/1063)
+- Stop worker if no tasks left [#1062](https://github.com/ivmartel/dwv/issues/1062)
+
+---
+
+## [v0.30.4](https://github.com/ivmartel/dwv/releases/tag/v0.30.4) - 10/12/2021
+
+### Fixed
+
+- Load i18next plugins as modules [#1057](https://github.com/ivmartel/dwv/issues/1057)
+- Update overlays after event data change [#1056](https://github.com/ivmartel/dwv/issues/1056)
+
+### Dependencies
+
+- Replace i18next-xhr-backend with i18next-http-backend [#1049](https://github.com/ivmartel/dwv/issues/1049)
+
+---
+
+## [v0.30.3](https://github.com/ivmartel/dwv/releases/tag/v0.30.3) - 09/12/2021
+
+### Fixed
+
+- y.Group is not a constructor [#1055](https://github.com/ivmartel/dwv/issues/1055)
+
+---
+
+## [v0.30.2](https://github.com/ivmartel/dwv/releases/tag/v0.30.2) - 07/12/2021
+
+### Added
+
+- Add browserlist to package.json [#1052](https://github.com/ivmartel/dwv/issues/1052)
+- Add engines to package.json [#1050](https://github.com/ivmartel/dwv/issues/1050)
+
+### Fixed
+
+- require() of ES modules is not supported [#1045](https://github.com/ivmartel/dwv/issues/1045)
+
+---
+
+## [v0.30.1](https://github.com/ivmartel/dwv/releases/tag/v0.30.1) - 03/12/2021
+
+### Fixed
+
+- Missing class for Konva [#1044](https://github.com/ivmartel/dwv/issues/1044)
+
+---
+
+## [v0.30.0](https://github.com/ivmartel/dwv/releases/tag/v0.30.0) - 02/12/2021
+
+### Added
+
+- Allow for manual frame add [#1034](https://github.com/ivmartel/dwv/issues/1034)
+- Add support for multi-resolution data [#1003](https://github.com/ivmartel/dwv/issues/1003)
+- Remove coveralls and use karma coverage check [#1002](https://github.com/ivmartel/dwv/issues/1002)
+- Use the same (web) worker for multiple data decode [#993](https://github.com/ivmartel/dwv/issues/993)
+- Add text encoding in data writer [#963](https://github.com/ivmartel/dwv/issues/963)
+- Support anisotropic pixels [#952](https://github.com/ivmartel/dwv/issues/952)
+- Check data allocation size to avoid error [#951](https://github.com/ivmartel/dwv/issues/951)
+- Allow to load files based on UID [#949](https://github.com/ivmartel/dwv/issues/949)
+- Simplify image class data storage [#905](https://github.com/ivmartel/dwv/issues/905)
+- Multi-slice view [#133](https://github.com/ivmartel/dwv/issues/133)
+- Add MPR [#4](https://github.com/ivmartel/dwv/issues/4)
+
+### Fixed
+
+- Check var length before accessing it [#1017](https://github.com/ivmartel/dwv/issues/1017)
+- Drag&drop of the ruler label causes console errors [#994](https://github.com/ivmartel/dwv/issues/994)
+
+---
+
+## [v0.29.1](https://github.com/ivmartel/dwv/releases/tag/v0.29.1) - 11/06/2021
+
+### Added
+
+- Reduce z-index of draw layers [#945](https://github.com/ivmartel/dwv/issues/945)
+- Postpone DOM first access [#944](https://github.com/ivmartel/dwv/issues/944)
+
+---
+
+## [v0.29.0](https://github.com/ivmartel/dwv/releases/tag/v0.29.0) - 03/06/2021
+
+### Breaking
+
+- Allow for multiple image layers [#893](https://github.com/ivmartel/dwv/issues/893)
+- Move roi meta data to meta object [#883](https://github.com/ivmartel/dwv/issues/883)
+
+### Added
+
+- Add utilities for CIE lab colour conversion [#940](https://github.com/ivmartel/dwv/issues/940)
+- Send draw creation events at state load [#939](https://github.com/ivmartel/dwv/issues/939)
+- Recurse in sequences when extracting meta data [#921](https://github.com/ivmartel/dwv/issues/921)
+- Add support for binary data [#919](https://github.com/ivmartel/dwv/issues/919)
+- Use the wheel event [#917](https://github.com/ivmartel/dwv/issues/917)
+- Remove bower configuration [#913](https://github.com/ivmartel/dwv/issues/913)
+- Move to Github actions [#912](https://github.com/ivmartel/dwv/issues/912)
+- Mouse drag: Lowering WW below 0 Exception [#903](https://github.com/ivmartel/dwv/issues/903)
+- Add shadow to text and background to label [#889](https://github.com/ivmartel/dwv/issues/889)
+- Fix label text size [#887](https://github.com/ivmartel/dwv/issues/887)
+- Allow to change the image layer opacity [#886](https://github.com/ivmartel/dwv/issues/886)
+- Add circle draw shape [#885](https://github.com/ivmartel/dwv/issues/885)
+- Add median, 25% and 75% percentiles to shape quantification [#877](https://github.com/ivmartel/dwv/issues/877)
+- Add pixel quantification for ellipse [#871](https://github.com/ivmartel/dwv/issues/871)
+- Out of view text [#151](https://github.com/ivmartel/dwv/issues/151)
+
+---
+
 ## [v0.28.2](https://github.com/ivmartel/dwv/releases/tag/v0.28.2) - 20/04/2021
 
 ### Fixed
@@ -268,7 +799,7 @@
 
 ### Added
 
-- Make mouse-wheel and mouse-move coherent for scroll  [#427](https://github.com/ivmartel/dwv/issues/427)
+- Make mouse-wheel and mouse-move coherent for scroll [#427](https://github.com/ivmartel/dwv/issues/427)
 - Misprint in label [#426](https://github.com/ivmartel/dwv/issues/426)
 - Add folder support on file input [#424](https://github.com/ivmartel/dwv/issues/424)
 - Allow to cancel a file download and/or display [#412](https://github.com/ivmartel/dwv/issues/412)
@@ -317,7 +848,7 @@
 
 ### Added
 
-- Allow for easier file loader integration  [#337](https://github.com/ivmartel/dwv/issues/337)
+- Allow for easier file loader integration [#337](https://github.com/ivmartel/dwv/issues/337)
 - Use a top of page line progress for the mobile viewer [#333](https://github.com/ivmartel/dwv/issues/333)
 - Import data from video file [#328](https://github.com/ivmartel/dwv/issues/328)
 - Do not show mesures when no pixel spacing is set [#302](https://github.com/ivmartel/dwv/issues/302)
@@ -374,7 +905,7 @@
 
 ### Added
 
-- Allow for individual draw display toggle  [#293](https://github.com/ivmartel/dwv/issues/293)
+- Allow for individual draw display toggle [#293](https://github.com/ivmartel/dwv/issues/293)
 - Add a free-hand draw tool [#292](https://github.com/ivmartel/dwv/issues/292)
 - Add an annotation draw tool [#291](https://github.com/ivmartel/dwv/issues/291)
 - Change the line tool into a ruler [#290](https://github.com/ivmartel/dwv/issues/290)
@@ -462,7 +993,7 @@
 
 - Fix id generator [#201](https://github.com/ivmartel/dwv/issues/201)
 - Fix slice order glitch [#200](https://github.com/ivmartel/dwv/issues/200)
-- group.id argument for draw listener  [#198](https://github.com/ivmartel/dwv/issues/198)
+- group.id argument for draw listener [#198](https://github.com/ivmartel/dwv/issues/198)
 - Uncaught TypeError: Cannot read property 'add' of null [#197](https://github.com/ivmartel/dwv/issues/197)
 
 ---
@@ -484,7 +1015,7 @@
 
 ### Added
 
-- Access GUI component per app  [#177](https://github.com/ivmartel/dwv/issues/177)
+- Access GUI component per app [#177](https://github.com/ivmartel/dwv/issues/177)
 
 ### Fixed
 
@@ -682,7 +1213,7 @@
 - Adapt presets to modality [#37](https://github.com/ivmartel/dwv/issues/37)
 - MVC Design [#36](https://github.com/ivmartel/dwv/issues/36)
 - Safeguard zoom/pan [#35](https://github.com/ivmartel/dwv/issues/35)
-- Use the bits* DICOM tags [#30](https://github.com/ivmartel/dwv/issues/30)
+- Use the bits\* DICOM tags [#30](https://github.com/ivmartel/dwv/issues/30)
 - Load multiple local slices [#3](https://github.com/ivmartel/dwv/issues/3)
 
 ### Fixed

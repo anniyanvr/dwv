@@ -1,6 +1,12 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
+import {Point2D} from './point.js';
+import {getStats} from './stats.js';
+import {Index} from './index.js';
+
+/**
+ * @import {ViewController} from '../app/viewController.js';
+ * @import {Scalar2D} from './scalar.js';
+ * @import {NumberValue} from './types.js';
+ */
 
 /**
  * Mulitply the three inputs if the last two are not null.
@@ -11,172 +17,281 @@ dwv.math = dwv.math || {};
  * @returns {number} The multiplication of the three inputs or
  *  null if one of the last two is null.
  */
-dwv.math.mulABC = function (a, b, c) {
-  var res = null;
+function mulABC(a, b, c) {
+  let res = null;
   if (b !== null && c !== null) {
     res = a * b * c;
   }
   return res;
-};
+}
 
 /**
  * Rectangle shape.
- *
- * @class
- * @param {object} begin A Point2D representing the beginning of the rectangle.
- * @param {object} end A Point2D representing the end of the rectangle.
  */
-dwv.math.Rectangle = function (begin, end) {
-  if (end.getX() < begin.getX()) {
-    var tmpX = begin.getX();
-    begin = new dwv.math.Point2D(end.getX(), begin.getY());
-    end = new dwv.math.Point2D(tmpX, end.getY());
-  }
-  if (end.getY() < begin.getY()) {
-    var tmpY = begin.getY();
-    begin = new dwv.math.Point2D(begin.getX(), end.getY());
-    end = new dwv.math.Point2D(end.getX(), tmpY);
+export class Rectangle {
+
+  /**
+   * Rectangle begin point.
+   *
+   * @type {Point2D}
+   */
+  #begin;
+
+  /**
+   * Rectangle end point.
+   *
+   * @type {Point2D}
+   */
+  #end;
+
+  /**
+   * @param {Point2D} begin A Point2D representing the beginning
+   *   of the rectangle.
+   * @param {Point2D} end A Point2D representing the end
+   *   of the rectangle.
+   */
+  constructor(begin, end) {
+    this.#begin = new Point2D(
+      Math.min(begin.getX(), end.getX()),
+      Math.min(begin.getY(), end.getY())
+    );
+    this.#end = new Point2D(
+      Math.max(begin.getX(), end.getX()),
+      Math.max(begin.getY(), end.getY())
+    );
   }
 
   /**
    * Get the begin point of the rectangle.
    *
-   * @returns {object} The begin point of the rectangle
+   * @returns {Point2D} The begin point of the rectangle.
    */
-  this.getBegin = function () {
-    return begin;
-  };
+  getBegin() {
+    return this.#begin;
+  }
 
   /**
    * Get the end point of the rectangle.
    *
-   * @returns {object} The end point of the rectangle
+   * @returns {Point2D} The end point of the rectangle.
    */
-  this.getEnd = function () {
-    return end;
-  };
-}; // Rectangle class
-
-/**
- * Check for equality.
- *
- * @param {object} rhs The object to compare to.
- * @returns {boolean} True if both objects are equal.
- */
-dwv.math.Rectangle.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getBegin().equals(rhs.getBegin()) &&
-    this.getEnd().equals(rhs.getEnd());
-};
-
-/**
- * Get the surface of the rectangle.
- *
- * @returns {number} The surface of the rectangle.
- */
-dwv.math.Rectangle.prototype.getSurface = function () {
-  var begin = this.getBegin();
-  var end = this.getEnd();
-  return Math.abs(end.getX() - begin.getX()) *
-    Math.abs(end.getY() - begin.getY());
-};
-
-/**
- * Get the surface of the rectangle according to a spacing.
- *
- * @param {number} spacingX The X spacing.
- * @param {number} spacingY The Y spacing.
- * @returns {number} The surface of the rectangle multiplied by the given
- *  spacing or null for null spacings.
- */
-dwv.math.Rectangle.prototype.getWorldSurface = function (spacingX, spacingY) {
-  return dwv.math.mulABC(this.getSurface(), spacingX, spacingY);
-};
-
-/**
- * Get the real width of the rectangle.
- *
- * @returns {number} The real width of the rectangle.
- */
-dwv.math.Rectangle.prototype.getRealWidth = function () {
-  return this.getEnd().getX() - this.getBegin().getX();
-};
-
-/**
- * Get the real height of the rectangle.
- *
- * @returns {number} The real height of the rectangle.
- */
-dwv.math.Rectangle.prototype.getRealHeight = function () {
-  return this.getEnd().getY() - this.getBegin().getY();
-};
-
-/**
- * Get the width of the rectangle.
- *
- * @returns {number} The width of the rectangle.
- */
-dwv.math.Rectangle.prototype.getWidth = function () {
-  return Math.abs(this.getRealWidth());
-};
-
-/**
- * Get the height of the rectangle.
- *
- * @returns {number} The height of the rectangle.
- */
-dwv.math.Rectangle.prototype.getHeight = function () {
-  return Math.abs(this.getRealHeight());
-};
-
-/**
- * Get the rounded limits of the rectangle.
- *
- * @returns {object} The rounded limits.
- */
-dwv.math.Rectangle.prototype.getRound = function () {
-  return {
-    min: this.getBegin().getRound(),
-    max: this.getEnd().getRound()
-  };
-};
-
-/**
- * Quantify a rectangle according to view information.
- *
- * @param {object} viewController The associated view controller.
- * @param {Array} flags A list of stat values to calculate.
- * @returns {object} A quantification object.
- */
-dwv.math.Rectangle.prototype.quantify = function (viewController, flags) {
-  var quant = {};
-  // surface
-  var spacing = viewController.get2DSpacing();
-  var surface = this.getWorldSurface(spacing[0], spacing[1]);
-  if (surface !== null) {
-    quant.surface = {value: surface / 100, unit: dwv.i18n('unit.cm2')};
+  getEnd() {
+    return this.#end;
   }
 
-  // pixel quantification
-  if (viewController.canQuantifyImage()) {
-    var round = this.getRound();
-    var values = viewController.getImageRegionValues(round.min, round.max);
-    var quantif = dwv.math.getStats(values, flags);
-    quant.min = {value: quantif.getMin(), unit: ''};
-    quant.max = {value: quantif.getMax(), unit: ''};
-    quant.mean = {value: quantif.getMean(), unit: ''};
-    quant.stdDev = {value: quantif.getStdDev(), unit: ''};
-    if (typeof quantif.getMedian !== 'undefined') {
-      quant.median = {value: quantif.getMedian(), unit: ''};
-    }
-    if (typeof quantif.getP25 !== 'undefined') {
-      quant.p25 = {value: quantif.getP25(), unit: ''};
-    }
-    if (typeof quantif.getP75 !== 'undefined') {
-      quant.p75 = {value: quantif.getP75(), unit: ''};
-    }
+  /**
+   * Check for equality.
+   *
+   * @param {Rectangle} rhs The object to compare to.
+   * @returns {boolean} True if both objects are equal.
+   */
+  equals(rhs) {
+    return rhs !== null &&
+      this.getBegin().equals(rhs.getBegin()) &&
+      this.getEnd().equals(rhs.getEnd());
   }
 
-  // return
-  return quant;
-};
+  /**
+   * Get the surface of the rectangle.
+   *
+   * @returns {number} The surface of the rectangle.
+   */
+  getSurface() {
+    const begin = this.getBegin();
+    const end = this.getEnd();
+    return Math.abs(end.getX() - begin.getX()) *
+      Math.abs(end.getY() - begin.getY());
+  }
+
+  /**
+   * Get the surface of the rectangle according to a spacing.
+   *
+   * @param {Scalar2D} spacing2D The 2D spacing.
+   * @returns {number} The surface of the rectangle multiplied by the given
+   *  spacing or null for null spacings.
+   */
+  getWorldSurface(spacing2D) {
+    return mulABC(this.getSurface(), spacing2D.x, spacing2D.y);
+  }
+
+  /**
+   * Get the real width of the rectangle.
+   *
+   * @returns {number} The real width of the rectangle.
+   */
+  getRealWidth() {
+    return this.getEnd().getX() - this.getBegin().getX();
+  }
+
+  /**
+   * Get the real height of the rectangle.
+   *
+   * @returns {number} The real height of the rectangle.
+   */
+  getRealHeight() {
+    return this.getEnd().getY() - this.getBegin().getY();
+  }
+
+  /**
+   * Get the width of the rectangle.
+   *
+   * @returns {number} The width of the rectangle.
+   */
+  getWidth() {
+    return Math.abs(this.getRealWidth());
+  }
+
+  /**
+   * Get the height of the rectangle.
+   *
+   * @returns {number} The height of the rectangle.
+   */
+  getHeight() {
+    return Math.abs(this.getRealHeight());
+  }
+
+  /**
+   * Get the rounded limits of the rectangle.
+   *
+   * @returns {object} The rounded limits as {min, max} (Point2D).
+   */
+  getRound() {
+    const roundBegin = new Point2D(
+      Math.round(this.getBegin().getX()),
+      Math.round(this.getBegin().getY())
+    );
+    const roundEnd = new Point2D(
+      Math.round(this.getEnd().getX()),
+      Math.round(this.getEnd().getY())
+    );
+    return {
+      min: roundBegin,
+      max: roundEnd
+    };
+  }
+
+  /**
+   * Get the centroid of the rectangle.
+   *
+   * @returns {Point2D} The centroid point.
+   */
+  getCentroid() {
+    return new Point2D(
+      this.getBegin().getX() + this.getWidth() / 2,
+      this.getBegin().getY() + this.getHeight() / 2
+    );
+  }
+
+  /**
+   * Check if a point is inside the rectangle, or within a tolerance
+   *   of its outline.
+   *
+   * @param {Point2D} point The point to check.
+   * @param {number} [tolerance] Optional maximum distance to the outline
+   *   for an outside point, defaults to 0.
+   * @returns {boolean} True if the point is in the rectangle.
+   */
+  contains(point, tolerance = 0) {
+    return point.getX() >= this.getBegin().getX() - tolerance &&
+      point.getX() <= this.getEnd().getX() + tolerance &&
+      point.getY() >= this.getBegin().getY() - tolerance &&
+      point.getY() <= this.getEnd().getY() + tolerance;
+  }
+
+  /**
+   * Quantify a rectangle according to view information.
+   *
+   * @param {ViewController} viewController The associated view controller.
+   * @param {Index} index The index at which to get the
+   *   image values.
+   * @param {string[]} flags A list of stat values to calculate.
+   * @returns {Record<string, NumberValue>} A quantification object.
+   */
+  quantify(viewController, index, flags) {
+    const spacing2D = viewController.get2DSpacing();
+    const lengthUnit = viewController.getLengthUnit();
+    const width = {
+      value: this.getWidth() * spacing2D.x,
+      unit: lengthUnit
+    };
+    const height = {
+      value: this.getHeight() * spacing2D.y,
+      unit: lengthUnit
+    };
+    const worldSurface = this.getWorldSurface(spacing2D);
+    let surface;
+    if (worldSurface !== null) {
+      if (lengthUnit === 'unit.mm') {
+        surface = {
+          value: worldSurface / 100,
+          unit: 'unit.cm2'
+        };
+      } else {
+        surface = {
+          value: worldSurface,
+          unit: lengthUnit
+        };
+      }
+    }
+
+    // shape quantification
+    const quant = {width, height, surface};
+
+    // pixel values quantification
+    if (viewController.canQuantifyImage()) {
+      const round = this.getRound();
+      const values = viewController.getImageRegionValues(
+        round.min, round.max, index);
+      const unit = viewController.getPixelUnit();
+      const quantif = getStats(values, flags);
+      if (typeof quantif !== 'undefined') {
+        quant.min = {value: quantif.min, unit};
+        quant.max = {value: quantif.max, unit};
+        quant.mean = {value: quantif.mean, unit};
+        quant.stdDev = {value: quantif.stdDev, unit};
+        if (typeof quantif.median !== 'undefined') {
+          quant.median = {value: quantif.median, unit};
+        }
+        if (typeof quantif.p25 !== 'undefined') {
+          quant.p25 = {value: quantif.p25, unit};
+        }
+        if (typeof quantif.p75 !== 'undefined') {
+          quant.p75 = {value: quantif.p75, unit};
+        }
+      }
+    }
+
+    // return
+    return quant;
+  }
+
+} // Rectangle class
+
+/**
+ * Get the indices that form a rectangle.
+ *
+ * @param {Index} center The rectangle center.
+ * @param {number[]} size The 2 rectangle sizes.
+ * @param {number[]} dir The 2 rectangle directions.
+ * @returns {Index[]} The indices of the rectangle.
+ */
+export function getRectangleIndices(center, size, dir) {
+  const centerValues = center.getValues();
+  // keep all values for possible extra dimensions
+  const values = centerValues.slice();
+  const indices = [];
+  const sizeI = size[0];
+  const halfSizeI = Math.floor(sizeI / 2);
+  const sizeJ = size[1];
+  const halfSizeJ = Math.floor(sizeJ / 2);
+  const di = dir[0];
+  const dj = dir[1];
+  for (let j = 0; j < sizeJ; ++j) {
+    values[dj] = centerValues[dj] - halfSizeJ + j;
+    for (let i = 0; i < sizeI; ++i) {
+      values[di] = centerValues[di] - halfSizeI + i;
+      indices.push(new Index(values.slice()));
+    }
+  }
+  return indices;
+}

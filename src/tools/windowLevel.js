@@ -1,196 +1,130 @@
-// namespaces
-var dwv = dwv || {};
-dwv.tool = dwv.tool || {};
+import {ScrollWheelBehavior} from './behaviors/wheelBehavior.js';
+import {LayerGroupPointer} from './layerGroupPointer.js';
+import {WindowLevelDragBehavior} from './behaviors/dragBehavior.js';
+import {
+  WindowLevelDoubleClickBehavior
+} from './behaviors/doubleClickBehavior.js';
+import {logger} from '../utils/logger.js';
+
+/**
+ * @import {App} from '../app/application.js';
+ */
 
 /**
  * WindowLevel tool: handle window/level related events.
  *
- * @class
- * @param {object} app The associated application.
+ * @example
+ * import {App, AppOptions, ViewConfig, ToolConfig} from '//esm.sh/dwv';
+ * // create the dwv app
+ * const app = new App();
+ * // initialise
+ * const viewConfig0 = new ViewConfig('layerGroup0');
+ * const viewConfigs = {'*': [viewConfig0]};
+ * const options = new AppOptions(viewConfigs);
+ * options.tools = {WindowLevel: new ToolConfig()};
+ * app.init(options);
+ * // activate tool
+ * app.addEventListener('load', function () {
+ *   app.setTool('WindowLevel');
+ * });
+ * // load dicom data
+ * app.loadURLs([
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323851.dcm'
+ * ]);
  */
-dwv.tool.WindowLevel = function (app) {
-  /**
-   * Closure to self: to be used by event handlers.
-   *
-   * @private
-   * @type {dwv.tool.WindowLevel}
-   */
-  var self = this;
-  /**
-   * Interaction start flag.
-   *
-   * @type {boolean}
-   */
-  this.started = false;
+export class WindowLevel extends LayerGroupPointer {
 
   /**
-   * Handle mouse down event.
+   * Associated app.
    *
-   * @param {object} event The mouse down event.
+   * @type {App}
    */
-  this.mousedown = function (event) {
-    // set start flag
-    self.started = true;
-    // store initial position
-    self.x0 = event._x;
-    self.y0 = event._y;
-    // update view controller
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-    viewController.setCurrentPosition2D(event._x, event._y);
-  };
+  #app;
 
   /**
-   * Handle mouse move event.
+   * Window/level drag behavior.
    *
-   * @param {object} event The mouse move event.
+   * @type {WindowLevelDragBehavior}
    */
-  this.mousemove = function (event) {
-    // check start flag
-    if (!self.started) {
-      return;
-    }
+  #dragBehavior;
 
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
+  /**
+   * Double-click W/L behavior (active-view-layer policy mirrors drag behavior).
+   *
+   * @type {WindowLevelDoubleClickBehavior}
+   */
+  #doubleClickBehavior;
 
-    // difference to last position
-    var diffX = event._x - self.x0;
-    var diffY = self.y0 - event._y;
-    // calculate new window level
-    var windowCenter =
-      parseInt(viewController.getWindowLevel().center, 10) + diffY;
-    var windowWidth =
-      parseInt(viewController.getWindowLevel().width, 10) + diffX;
-
-    // add the manual preset to the view
-    viewController.addWindowLevelPresets({
-      manual: {
-        wl: new dwv.image.WindowLevel(windowCenter, windowWidth),
-        name: 'manual'
-      }
+  /**
+   * @param {App} app The associated application.
+   */
+  constructor(app) {
+    const dragBehavior = new WindowLevelDragBehavior();
+    const doubleClickBehavior = new WindowLevelDoubleClickBehavior(
+      {dataController: app.getDataController()}
+    );
+    super({
+      stageController: app.getStageController(),
+      dragBehavior,
+      wheelBehavior: new ScrollWheelBehavior(),
+      doubleClickBehavior
     });
-    viewController.setWindowLevelPreset('manual');
-
-    // store position
-    self.x0 = event._x;
-    self.y0 = event._y;
-  };
-
-  /**
-   * Handle mouse up event.
-   *
-   * @param {object} _event The mouse up event.
-   */
-  this.mouseup = function (_event) {
-    // set start flag
-    if (self.started) {
-      self.started = false;
-    }
-  };
-
-  /**
-   * Handle mouse out event.
-   *
-   * @param {object} event The mouse out event.
-   */
-  this.mouseout = function (event) {
-    // treat as mouse up
-    self.mouseup(event);
-  };
-
-  /**
-   * Handle touch start event.
-   *
-   * @param {object} event The touch start event.
-   */
-  this.touchstart = function (event) {
-    self.mousedown(event);
-  };
-
-  /**
-   * Handle touch move event.
-   *
-   * @param {object} event The touch move event.
-   */
-  this.touchmove = function (event) {
-    self.mousemove(event);
-  };
-
-  /**
-   * Handle touch end event.
-   *
-   * @param {object} event The touch end event.
-   */
-  this.touchend = function (event) {
-    self.mouseup(event);
-  };
-
-  /**
-   * Handle double click event.
-   *
-   * @param {object} event The double click event.
-   */
-  this.dblclick = function (event) {
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-
-    // update view controller
-    viewController.setWindowLevel(
-      parseInt(app.getImage().getRescaledValue(
-        event._x,
-        event._y,
-        viewController.getCurrentPosition().k
-      ), 10),
-      parseInt(viewController.getWindowLevel().width, 10));
-  };
+    this.#app = app;
+    this.#dragBehavior = dragBehavior;
+    this.#doubleClickBehavior = doubleClickBehavior;
+  }
 
   /**
    * Handle key down event.
    *
    * @param {object} event The key down event.
    */
-  this.keydown = function (event) {
-    event.context = 'dwv.tool.WindowLevel';
-    app.onKeydown(event);
+  keydown = (event) => {
+    event.context = 'WindowLevel';
+    this.#app.onKeydown(event);
   };
 
   /**
    * Activate the tool.
    *
-   * @param {boolean} _bool The flag to activate or not.
+   * @param {boolean} bool The flag to activate or not.
    */
-  this.activate = function (_bool) {
-    // does nothing
-  };
+  activate(bool) {
+    if (!bool) {
+      this.cancel();
+    }
+  }
 
   /**
    * Initialise the tool.
    */
-  this.init = function () {
+  init() {
     // does nothing
-  };
+  }
 
-}; // WindowLevel class
-
-/**
- * Help for this tool.
- *
- * @returns {object} The help content.
- */
-dwv.tool.WindowLevel.prototype.getHelpKeys = function () {
-  return {
-    title: 'tool.WindowLevel.name',
-    brief: 'tool.WindowLevel.brief',
-    mouse: {
-      mouse_drag: 'tool.WindowLevel.mouse_drag',
-      double_click: 'tool.WindowLevel.double_click'
-    },
-    touch: {
-      touch_drag: 'tool.WindowLevel.touch_drag'
+  /**
+   * Set the tool live features.
+   *
+   * @param {object} features The list of features.
+   * @param {boolean} [features.strictViewLayer] Deprecated active view layer
+   *   only for W/L drag and double-click (see
+   *   {@link WindowLevelDragBehavior}).
+   * @param {boolean} [features.activeViewLayerOnly] Active view layer only
+   *   for W/L drag and double-click (see {@link WindowLevelDragBehavior}).
+   */
+  setFeatures(features) {
+    if (typeof features.strictViewLayer !== 'undefined') {
+      logger.warn(
+        'strictViewLayer is deprecated, use activeViewLayerOnly instead');
+      this.#dragBehavior.setActiveViewLayerOnly(features.strictViewLayer);
+      this.#doubleClickBehavior.setActiveViewLayerOnly(
+        features.strictViewLayer);
     }
-  };
-};
+    if (typeof features.activeViewLayerOnly !== 'undefined') {
+      this.#dragBehavior.setActiveViewLayerOnly(features.activeViewLayerOnly);
+      this.#doubleClickBehavior.setActiveViewLayerOnly(
+        features.activeViewLayerOnly);
+    }
+  }
+
+} // WindowLevel class

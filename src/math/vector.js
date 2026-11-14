@@ -1,100 +1,149 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
-
 /**
  * Immutable 3D vector.
- *
- * @class
- * @param {number} x The X component of the vector.
- * @param {number} y The Y component of the vector.
- * @param {number} z The Z component of the vector.
  */
-dwv.math.Vector3D = function (x, y, z) {
+export class Vector3D {
+
+  /**
+   * X coordinate.
+   *
+   * @type {number}
+   */
+  #x;
+
+  /**
+   * Y coordinate.
+   *
+   * @type {number}
+   */
+  #y;
+
+  /**
+   * Z coordinate.
+   *
+   * @type {number}
+   */
+  #z;
+
+  /**
+   * @param {number} x The X component of the vector.
+   * @param {number} y The Y component of the vector.
+   * @param {number} z The Z component of the vector.
+   */
+  constructor(x, y, z) {
+    this.#x = x;
+    this.#y = y;
+    this.#z = z;
+  }
+
   /**
    * Get the X component of the vector.
    *
    * @returns {number} The X component of the vector.
    */
-  this.getX = function () {
-    return x;
-  };
+  getX() {
+    return this.#x;
+  }
+
   /**
    * Get the Y component of the vector.
    *
    * @returns {number} The Y component of the vector.
    */
-  this.getY = function () {
-    return y;
-  };
+  getY() {
+    return this.#y;
+  }
+
   /**
    * Get the Z component of the vector.
    *
    * @returns {number} The Z component of the vector.
    */
-  this.getZ = function () {
-    return z;
-  };
-}; // Vector3D class
+  getZ() {
+    return this.#z;
+  }
 
-/**
- * Check for Vector3D equality.
- *
- * @param {object} rhs The other vector to compare to.
- * @returns {boolean} True if both vectors are equal.
- */
-dwv.math.Vector3D.prototype.equals = function (rhs) {
-  return rhs !== null &&
-        this.getX() === rhs.getX() &&
-        this.getY() === rhs.getY() &&
-        this.getZ() === rhs.getZ();
-};
+  /**
+   * Check for Vector3D equality.
+   *
+   * @param {Vector3D} rhs The other vector to compare to.
+   * @returns {boolean} True if both vectors are equal.
+   */
+  equals(rhs) {
+    return rhs !== null &&
+      this.#x === rhs.getX() &&
+      this.#y === rhs.getY() &&
+      this.#z === rhs.getZ();
+  }
 
-/**
- * Get a string representation of the Vector3D.
- *
- * @returns {string} The vector as a string.
- */
-dwv.math.Vector3D.prototype.toString = function () {
-  return '(' + this.getX() +
-        ', ' + this.getY() +
-        ', ' + this.getZ() + ')';
-};
+  /**
+   * Get a string representation of the Vector3D.
+   *
+   * @returns {string} The vector as a string.
+   */
+  toString() {
+    return `(${ this.#x
+    }, ${ this.#y
+    }, ${this.#z})`;
+  }
 
-/**
- * Get the norm of the vector.
- *
- * @returns {number} The norm.
- */
-dwv.math.Vector3D.prototype.norm = function () {
-  return Math.sqrt((this.getX() * this.getX()) +
-        (this.getY() * this.getY()) +
-        (this.getZ() * this.getZ()));
-};
+  /**
+   * Get the norm of the vector.
+   *
+   * @returns {number} The norm.
+   */
+  norm() {
+    return Math.sqrt(
+      (this.#x * this.#x) +
+      (this.#y * this.#y) +
+      (this.#z * this.#z)
+    );
+  }
 
-/**
- * Get the cross product with another Vector3D, ie the
- * vector that is perpendicular to both a and b.
- * If both vectors are parallel, the cross product is a zero vector.
- *
- * @param {object} vector3D The input vector.
- * @returns {object} The result vector.
- */
-dwv.math.Vector3D.prototype.crossProduct = function (vector3D) {
-  return new dwv.math.Vector3D(
-    (this.getY() * vector3D.getZ()) - (vector3D.getY() * this.getZ()),
-    (this.getZ() * vector3D.getX()) - (vector3D.getZ() * this.getX()),
-    (this.getX() * vector3D.getY()) - (vector3D.getX() * this.getY()));
-};
+  /**
+   * Get the cross product with another Vector3D, ie the
+   * vector that is perpendicular to both a and b.
+   * If both vectors are parallel, the cross product is a zero vector.
+   *
+   * Ref: {@link https://en.wikipedia.org/wiki/Cross_product}.
+   *
+   * @param {Vector3D} vector3D The input vector.
+   * @returns {Vector3D} The result vector.
+   */
+  crossProduct(vector3D) {
+    return new Vector3D(
+      (this.#y * vector3D.getZ()) - (vector3D.getY() * this.#z),
+      (this.#z * vector3D.getX()) - (vector3D.getZ() * this.#x),
+      (this.#x * vector3D.getY()) - (vector3D.getX() * this.#y));
+  }
 
-/**
- * Get the dot product with another Vector3D.
- *
- * @param {object} vector3D The input vector.
- * @returns {number} The dot product.
- */
-dwv.math.Vector3D.prototype.dotProduct = function (vector3D) {
-  return (this.getX() * vector3D.getX()) +
-        (this.getY() * vector3D.getY()) +
-        (this.getZ() * vector3D.getZ());
-};
+  /**
+   * Get the dot product with another Vector3D.
+   *
+   * Ref: {@link https://en.wikipedia.org/wiki/Dot_product}.
+   *
+   * @param {Vector3D} vector3D The input vector.
+   * @returns {number} The dot product.
+   */
+  dotProduct(vector3D) {
+    return (this.#x * vector3D.getX()) +
+      (this.#y * vector3D.getY()) +
+      (this.#z * vector3D.getZ());
+  }
+
+  /**
+   * Is this vector codirectional to an input one.
+   *
+   * @param {Vector3D} vector3D The vector to test.
+   * @returns {boolean} True if codirectional, false is opposite.
+   */
+  isCodirectional(vector3D) {
+    // a.dot(b) = ||a|| * ||b|| * cos(theta)
+    // (https://en.wikipedia.org/wiki/Dot_product#Geometric_definition)
+    // -> the sign of the dot product depends on the cosinus of
+    //    the angle between the vectors
+    //   -> >0 => vectors are codirectional
+    //   -> <0 => vectors are opposite
+    return this.dotProduct(vector3D) > 0;
+  }
+
+} // Vector3D class

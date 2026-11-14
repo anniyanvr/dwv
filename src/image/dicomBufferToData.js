@@ -1,0 +1,526 @@
+import {logger} from '../utils/logger.js';
+import {safeGet} from '../dicom/dataElement.js';
+import {
+  DicomParser,
+  getSyntaxDecompressionName
+} from '../dicom/dicomParser.js';
+import {getAnyPixelDataElement} from '../dicom/dicomTag.js';
+import {PixelBufferDecoder} from './decoder.js';
+import {DicomData} from '../app/dataController.js';
+
+/**
+ * @import {TypedArray} from '../math/types.js';
+ */
+
+/**
+ * Related DICOM tag keys.
+ */
+const TagKeys = {
+  TransferSyntaxUID: '00020010',
+  Modality: '00080060',
+  NumberOfFrames: '00280008',
+  SamplesPerPixel: '00280002',
+  PlanarConfiguration: '00280006',
+  Rows: '00280010',
+  Columns: '00280011',
+  BitsAllocated: '00280100',
+  PixelRepresentation: '00280103',
+  FloatPixelData: '7FE00008',
+  DoubleFloatPixelData: '7FE00009'
+};
+
+/**
+ * Create a DicomData from a DICOM buffer: parses it, stores the meta data and
+ * the image buffer if pixel data is present. Buffer is decoded if needed,
+ * only necessary tags for decompression are checked.
+ */
+export class DicomBufferToData {
+
+  /**
+   * Converter options.
+   *
+   * @type {object}
+   */
+  #options;
+
+  /**
+   * Set the converter options.
+   *
+   * @param {object} opt The input options.
+   */
+  setOptions(opt) {
+    this.#options = opt;
+  }
+
+  /**
+   * Pixel buffer decoder.
+   * Define only once to allow optional asynchronous mode.
+   *
+   * @type {PixelBufferDecoder|undefined}
+   */
+  #pixelDecoder;
+
+  /**
+   * List of dicom parsers.
+   *
+   * @type {DicomParser[]}
+   */
+  #dicomParserStore = [];
+
+  /**
+   * List of number of decoded items: items can be decoded in any order
+   * (decoding is done in parallel), so the item number cannot be used
+   * to know if an item is the first or last one to be decoded.
+   *
+   * @type {number[]}
+   */
+  #numberOfDecodedItems = [];
+
+  /**
+   * List of full buffers for data that is not split into frames
+   * (see #isFrameSplit), filled as items are decoded.
+   *
+   * @type {TypedArray[]}
+   */
+  #fullBufferStore = [];
+
+  /**
+   * Abort flag.
+   *
+   * @type {boolean}
+   */
+  #aborted = false;
+
+  /**
+   * Generate the data object.
+   *
+   * @param {number} index The data index.
+   * @param {string} origin The data origin.
+   * @param {TypedArray} [buffer] The pixel buffer.
+   * @param {number} [frameNumber] The frame number if the buffer
+   *   only contains one frame of a multi-frame data.
+   */
+  #generateData(index, origin, buffer, frameNumber) {
+    const dataElements = this.#dicomParserStore[index].getDicomElements();
+    // create data
+    const data = new DicomData(dataElements);
+    data.buffer = buffer;
+    data.numberOfItems = this.#options.numberOfItems;
+    data.frameNumber = frameNumber;
+
+    // call onloaditem
+    this.onloaditem({
+      data,
+      source: origin
+    });
+  }
+
+  /**
+   * Check if the data should be split into frames: multi-frame
+   * data (apart from DICOM SEG, whose mask is created from the
+   * full buffer) is sent frame by frame and assembled by the image.
+   *
+   * @param {number} index The data index.
+   * @param {number} numberOfFrames The number of frames.
+   * @returns {boolean} True if the data is split into frames.
+   */
+  #isFrameSplit(index, numberOfFrames) {
+    const dataElements = this.#dicomParserStore[index].getDicomElements();
+    return numberOfFrames > 1 &&
+      safeGet(dataElements, TagKeys.Modality) !== 'SEG';
+  }
+
+  /**
+   * Send final events for a succesfull load.
+   *
+   * @param {number} index The data index.
+   * @param {string} origin The data origin.
+   */
+  #sendFinalEvents(index, origin) {
+    if (this.#aborted) {
+      return;
+    }
+    // send 100% progress
+    this.onprogress({
+      lengthComputable: true,
+      loaded: 100,
+      total: 100,
+      index,
+      source: origin
+    });
+    // send load event
+    this.onload({
+      source: origin
+    });
+    // allways send loadend
+    this.onloadend({
+      source: origin
+    });
+  }
+
+  /**
+   * Setup the pixel decoder.
+   *
+   * @param {string} algoName The algorithm name.
+   */
+  #setupPixelDecoder(algoName) {
+    this.#pixelDecoder = new PixelBufferDecoder(algoName);
+    // callbacks
+    // pixelDecoder.ondecodestart: nothing to do
+    this.#pixelDecoder.ondecodeditem = (event) => {
+      this.#onDecodedItem(event);
+    };
+    // pixelDecoder.ondecoded: nothing to do
+    // pixelDecoder.ondecodeend: nothing to do
+    this.#pixelDecoder.onerror = this.onerror;
+    this.#pixelDecoder.onabort = this.onabort;
+  }
+
+  /**
+   * Get the dicom meta used by decoders.
+   *
+   * @param {number} dataIndex The data index.
+   * @returns {object} The DICOM meta data.
+   */
+  #getPixelMeta(dataIndex) {
+    const dataElements = this.#dicomParserStore[dataIndex].getDicomElements();
+    const pixelMeta = {missing: []};
+    // bits allocated
+    const bitsAllocated = safeGet(dataElements, TagKeys.BitsAllocated);
+    if (typeof bitsAllocated !== 'undefined') {
+      pixelMeta.bitsAllocated = bitsAllocated;
+    } else {
+      pixelMeta.missing.push('bitsAllocated');
+    }
+    // pixel reprensentation
+    const pixelRepresentation =
+      safeGet(dataElements, TagKeys.PixelRepresentation);
+    if (typeof pixelRepresentation !== 'undefined') {
+      pixelMeta.isSigned = (pixelRepresentation === 1);
+    } else {
+      const floatPixelData =
+        safeGet(dataElements, TagKeys.FloatPixelData);
+      const doubleFloatPixelData =
+        safeGet(dataElements, TagKeys.DoubleFloatPixelData);
+      if (typeof floatPixelData !== 'undefined' ||
+        typeof doubleFloatPixelData !== 'undefined') {
+        pixelMeta.isSigned = true;
+      } else {
+        pixelMeta.missing.push('pixelRepresentation');
+      }
+    }
+    // slice size
+    const columns = safeGet(dataElements, TagKeys.Columns);
+    const rows = safeGet(dataElements, TagKeys.Rows);
+    if (typeof columns !== 'undefined' &&
+      typeof rows !== 'undefined') {
+      pixelMeta.sliceSize = columns * rows;
+    } else {
+      if (typeof columns === 'undefined') {
+        pixelMeta.missing.push('columns');
+      }
+      if (typeof rows === 'undefined') {
+        pixelMeta.missing.push('rows');
+      }
+    }
+    // samples per pixel
+    const samplesPerPixel =
+      safeGet(dataElements, TagKeys.SamplesPerPixel);
+    if (typeof samplesPerPixel !== 'undefined') {
+      pixelMeta.samplesPerPixel = samplesPerPixel;
+      // planar configuration
+      if (samplesPerPixel !== 1) {
+        const planarConfiguration =
+          safeGet(dataElements, TagKeys.PlanarConfiguration);
+        if (typeof planarConfiguration !== 'undefined') {
+          pixelMeta.planarConfiguration = planarConfiguration;
+        } else {
+          pixelMeta.missing.push('planarConfiguration');
+        }
+      }
+    } else {
+      pixelMeta.missing.push('samplesPerPixel');
+    }
+
+    return pixelMeta;
+  }
+
+  /**
+   * Decode and generate data for a compressed buffer.
+   *
+   * @param {number} dataIndex The data index.
+   * @param {string} origin The data origin.
+   * @param {TypedArray[]} pixelBuffer The pixel buffer.
+   */
+  #decodeAndGenerateData(dataIndex, origin, pixelBuffer) {
+    // get pixel meta
+    const pixelMeta = this.#getPixelMeta(dataIndex);
+    // abort if missing data
+    if (pixelMeta.missing.length !== 0) {
+      // abort
+      this.#pixelDecoder.abort();
+      // send events
+      this.onerror({
+        error: new Error(`Missing tags to decompress data:${
+          pixelMeta.missing.toString() }`),
+        source: origin
+      });
+      this.onloadend({
+        source: origin
+      });
+      return;
+    }
+
+    const numberOfItems = pixelBuffer.length;
+
+    // launch decode
+    for (let i = 0; i < numberOfItems; ++i) {
+      this.#pixelDecoder.decode(pixelBuffer[i], pixelMeta,
+        {
+          itemNumber: i,
+          numberOfItems,
+          index: dataIndex,
+          indexOrigin: origin
+        }
+      );
+    }
+  }
+
+  /**
+   * Handle a decoded item event.
+   *
+   * @param {object} event The decoded item event.
+   */
+  #onDecodedItem(event) {
+    // ignore items decoded before the abort
+    if (this.#aborted) {
+      return;
+    }
+
+    const dataIndex = event.index;
+    const origin = event.indexOrigin;
+
+    ++this.#numberOfDecodedItems[dataIndex];
+    const numberOfDecodedItems = this.#numberOfDecodedItems[dataIndex];
+
+    // send progress
+    this.onprogress({
+      lengthComputable: true,
+      loaded: numberOfDecodedItems,
+      total: event.numberOfItems,
+      index: event.index,
+      source: origin
+    });
+
+    const decodedData = event.data[0];
+    if (this.#isFrameSplit(dataIndex, event.numberOfItems)) {
+      // send the frame
+      this.#generateData(dataIndex, origin, decodedData, event.itemNumber);
+    } else if (event.numberOfItems === 1) {
+      this.#generateData(dataIndex, origin, decodedData);
+    } else {
+      // full buffer: allocate at first decoded item
+      if (typeof this.#fullBufferStore[dataIndex] === 'undefined') {
+        const fullSize = event.numberOfItems * decodedData.length;
+        try {
+          this.#fullBufferStore[dataIndex] =
+            new decodedData.constructor(fullSize);
+        } catch (error) {
+          if (error instanceof RangeError) {
+            const powerOf2 = Math.floor(Math.log(fullSize) / Math.log(2));
+            logger.error(`Cannot allocate ${
+              decodedData.constructor.name
+            } of size: ${
+              fullSize } (>2^${powerOf2}) for decompressed data.`);
+          }
+          // abort
+          this.#pixelDecoder.abort();
+          // send events
+          this.onerror({
+            error,
+            source: origin
+          });
+          this.onloadend({
+            source: origin
+          });
+          // exit
+          return;
+        }
+      }
+      // set item data (hoping for all items to have the same size...)
+      this.#fullBufferStore[dataIndex].set(
+        decodedData, decodedData.length * event.itemNumber);
+      // send the data once complete
+      if (numberOfDecodedItems === event.numberOfItems) {
+        this.#generateData(
+          dataIndex, origin, this.#fullBufferStore[dataIndex]);
+        this.#fullBufferStore[dataIndex] = undefined;
+      }
+    }
+
+    // send onload and onloadend when all items have been decoded
+    if (numberOfDecodedItems === event.numberOfItems) {
+      this.onload(event);
+      this.onloadend(event);
+    }
+  }
+
+  /**
+   * Convert an input buffer into DicomData using a DICOM parser. Asynchronous
+   * method in case of possible buffer decompression. Get the data
+   * from the 'onload' event.
+   *
+   * @param {TypedArray} buffer The input data buffer.
+   * @param {string} origin The data origin.
+   * @param {number} dataIndex The data index.
+   */
+  convert(buffer, origin, dataIndex) {
+    this.#aborted = false;
+    // start event
+    this.onloadstart({
+      source: origin,
+      index: dataIndex
+    });
+
+    // DICOM parser
+    const dicomParser = new DicomParser();
+
+    if (typeof this.#options.defaultCharacterSet !== 'undefined') {
+      dicomParser.setDefaultCharacterSet(this.#options.defaultCharacterSet);
+    }
+
+    // parse the buffer
+    try {
+      dicomParser.parse(buffer);
+      // check elements
+    } catch (error) {
+      this.onerror({
+        error,
+        source: origin
+      });
+      this.onloadend({
+        source: origin
+      });
+      return;
+    }
+
+    // store parser
+    this.#dicomParserStore[dataIndex] = dicomParser;
+
+    const elements = dicomParser.getDicomElements();
+    const pixelDataElement = getAnyPixelDataElement(elements);
+    if (typeof pixelDataElement !== 'undefined') {
+      const rawBuffer = pixelDataElement.value;
+      // transfer syntax (always there)
+      const transferSyntax = safeGet(elements, TagKeys.TransferSyntaxUID);
+      const algoName = getSyntaxDecompressionName(transferSyntax);
+      if (typeof algoName !== 'undefined') {
+        // setup the decoder (one decoder per all converts)
+        // TODO check constant algo name?
+        if (typeof this.#pixelDecoder === 'undefined') {
+          this.#setupPixelDecoder(algoName);
+        }
+        // reset decoding state (in case of index reuse)
+        this.#numberOfDecodedItems[dataIndex] = 0;
+        this.#fullBufferStore[dataIndex] = undefined;
+        // decode and generate data (asynchronous)
+        this.#decodeAndGenerateData(dataIndex, origin, rawBuffer);
+      } else {
+        const pixelBuffer = rawBuffer[0];
+        let numberOfFrames = parseInt(
+          safeGet(elements, TagKeys.NumberOfFrames), 10);
+        if (isNaN(numberOfFrames)) {
+          numberOfFrames = 1;
+        }
+        if (this.#isFrameSplit(dataIndex, numberOfFrames)) {
+          // send one data per frame (buffer views),
+          // stop if aborted by an item handler
+          const frameSize = pixelBuffer.length / numberOfFrames;
+          for (let f = 0; f < numberOfFrames && !this.#aborted; ++f) {
+            this.#generateData(dataIndex, origin,
+              pixelBuffer.subarray(f * frameSize, (f + 1) * frameSize), f);
+          }
+        } else {
+          this.#generateData(dataIndex, origin, pixelBuffer);
+        }
+        this.#sendFinalEvents(dataIndex, origin);
+      }
+    } else {
+      // non image data -> no buffer
+      // generate data
+      this.#generateData(dataIndex, origin);
+      this.#sendFinalEvents(dataIndex, origin);
+    }
+  }
+
+  /**
+   * Abort a conversion.
+   */
+  abort() {
+    this.#aborted = true;
+    // abort decoding, will trigger pixelDecoder.onabort
+    if (typeof this.#pixelDecoder !== 'undefined') {
+      this.#pixelDecoder.abort();
+    } else {
+      this.onabort({});
+    }
+  }
+
+  /**
+   * Handle a load start event.
+   * Default does nothing.
+   *
+   * @param {object} _event The load start event.
+   */
+  onloadstart(_event) {}
+
+  /**
+   * Handle a load item event.
+   * Default does nothing.
+   *
+   * @param {object} _event The load item event.
+   */
+  onloaditem(_event) {}
+
+  /**
+   * Handle a load progress event.
+   * Default does nothing.
+   *
+   * @param {object} _event The progress event.
+   */
+  onprogress(_event) {}
+
+  /**
+   * Handle a load event.
+   * Default does nothing.
+   *
+   * @param {object} _event The load event fired
+   *   when a file has been loaded successfully.
+   */
+  onload(_event) {}
+  /**
+   * Handle a load end event.
+   * Default does nothing.
+   *
+   * @param {object} _event The load end event fired
+   *  when a file load has completed, successfully or not.
+   */
+  onloadend(_event) {}
+
+  /**
+   * Handle an error event.
+   * Default does nothing.
+   *
+   * @param {object} _event The error event.
+   */
+  onerror(_event) {}
+
+  /**
+   * Handle an abort event.
+   * Default does nothing.
+   *
+   * @param {object} _event The abort event.
+   */
+  onabort(_event) {}
+
+} // class DicomBufferToView

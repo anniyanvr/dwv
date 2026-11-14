@@ -1,247 +1,202 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
-
 /**
- * Simple statistics
- *
- * @class
- * @param {number} min The minimum value.
- * @param {number} max The maximum value.
- * @param {number} mean The mean value.
- * @param {number} stdDev The standard deviation.
+ * Statistics storage class.
+ * 'simple' statistics do not include median, p25 nor p75.
  */
-dwv.math.SimpleStats = function (min, max, mean, stdDev) {
+export class Statistics {
   /**
-   * Get the minimum value.
+   * Minimum.
    *
-   * @returns {number} The minimum value.
+   * @type {number}
    */
-  this.getMin = function () {
-    return min;
-  };
+  min;
   /**
-   * Get the maximum value.
+   * Maximum.
    *
-   * @returns {number} The maximum value.
+   * @type {number}
    */
-  this.getMax = function () {
-    return max;
-  };
+  max;
   /**
-   * Get the mean value.
+   * Mean.
    *
-   * @returns {number} The mean value.
+   * @type {number}
    */
-  this.getMean = function () {
-    return mean;
-  };
+  mean;
   /**
-   * Get the standard deviation.
+   * Standard deviation (population: divided by the number of values).
    *
-   * @returns {number} The standard deviation.
+   * @type {number}
    */
-  this.getStdDev = function () {
-    return stdDev;
-  };
-};
+  stdDev;
+  /**
+   * Median.
+   *
+   * @type {number|undefined}
+   */
+  median;
+  /**
+   * 25th percentile.
+   *
+   * @type {number|undefined}
+   */
+  p25;
+  /**
+   * 75th percentile.
+   *
+   * @type {number|undefined}
+   */
+  p75;
+
+  /**
+   * @param {number} min The minimum.
+   * @param {number} max The maximum.
+   * @param {number} mean The mean.
+   * @param {number} stdDev The standard deviation.
+   */
+  constructor(min, max, mean, stdDev) {
+    this.min = min;
+    this.max = max;
+    this.mean = mean;
+    this.stdDev = stdDev;
+  }
+}
 
 /**
- * Check for Stats equality.
- *
- * @param {object} rhs The other Stats object to compare to.
- * @returns {boolean} True if both Stats object are equal.
- */
-dwv.math.SimpleStats.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getMin() === rhs.getMin() &&
-    this.getMax() === rhs.getMax() &&
-    this.getMean() === rhs.getMean() &&
-    this.getStdDev() === rhs.getStdDev();
-};
-
-/**
- * Get the stats as an object
- *
- * @returns {object} An object representation of the stats.
- */
-dwv.math.SimpleStats.prototype.asObject = function () {
-  return {
-    min: this.getMin(),
-    max: this.getMax(),
-    mean: this.getMean(),
-    stdDev: this.getStdDev()
-  };
-};
-
-dwv.math.FullStats = function (min, max, mean, stdDev, median, p25, p75) {
-  dwv.math.SimpleStats.call(this, min, max, mean, stdDev);
-  /**
-   * Get the median value.
-   *
-   * @returns {number} The median value.
-   */
-  this.getMedian = function () {
-    return median;
-  };
-  /**
-   * Get the 25th persentile value.
-   *
-   * @returns {number} The 25th persentile value.
-   */
-  this.getP25 = function () {
-    return p25;
-  };
-  /**
-   * Get the 75th persentile value.
-   *
-   * @returns {number} The 75th persentile value.
-   */
-  this.getP75 = function () {
-    return p75;
-  };
-};
-
-// inherit from simple stats
-dwv.math.FullStats.prototype = Object.create(dwv.math.SimpleStats.prototype);
-Object.defineProperty(dwv.math.FullStats.prototype, 'constructor', {
-  value: dwv.math.FullStats,
-  enumerable: false, // so that it does not appear in 'for in' loop
-  writable: true
-});
-
-/**
- * Get the minimum, maximum, mean and standard deviation
- * of an array of values.
+ * Get statistics on an input array of number.
  * Note: could use {@link https://github.com/tmcw/simple-statistics}.
  *
- * @param {Array} array The array of values to extract stats from.
- * @param {Array} flags A list of stat values to calculate.
- * @returns {dwv.math.Stats} A stats object.
+ * @param {number[]} values The array of values to extract stats from.
+ * @param {string[]} [flags] A list of stat value names to calculate.
+ * @returns {Statistics|undefined} A statistics object, undefined if
+ *   the input array is empty.
  */
-dwv.math.getStats = function (array, flags) {
-  if (dwv.math.includesFullStatsFlags(flags)) {
-    return dwv.math.getFullStats(array);
-  } else {
-    return dwv.math.getSimpleStats(array);
+export function getStats(values, flags) {
+  if (includesFullStatsFlags(flags)) {
+    return getFullStats(values);
   }
-};
+  return getBasicStats(values);
+}
 
 /**
  * Does the input flag list contain a full stat element?
  *
- * @param {Array} flags A list of stat values to calculate.
- * @returns {boolean} True if one of the flags is a full start flag.
+ * @param {string[]} [flags] A list of stat values to calculate.
+ * @returns {boolean} True if one of the flags is a full stat flag.
  */
-dwv.math.includesFullStatsFlags = function (flags) {
+function includesFullStatsFlags(flags) {
   return typeof flags !== 'undefined' &&
     flags !== null &&
-    flags.includes('median', 'p25', 'p75');
-};
+    (flags.includes('median') ||
+      flags.includes('p25') ||
+      flags.includes('p75'));
+}
 
 /**
  * Get simple stats: minimum, maximum, mean and standard deviation
  * of an array of values.
  *
- * @param {Array} array The array of values to extract stats from.
- * @returns {dwv.math.SimpleStats} A simple stats object.
+ * @param {number[]} values The array of values to extract stats from.
+ * @returns {Statistics|undefined} Simple statistics (no median, p25
+ *   nor p75), undefined if the input array is empty.
  */
-dwv.math.getSimpleStats = function (array) {
-  var min = array[0];
-  var max = min;
-  var sum = 0;
-  var sumSqr = 0;
-  var val = 0;
-  var length = array.length;
-  for (var i = 0; i < length; ++i) {
-    val = array[i];
+export function getBasicStats(values) {
+  const length = values.length;
+  if (length === 0) {
+    return undefined;
+  }
+
+  let min = values[0];
+  let max = min;
+  let sum = 0;
+  for (const val of values) {
     if (val < min) {
       min = val;
     } else if (val > max) {
       max = val;
     }
     sum += val;
-    sumSqr += val * val;
   }
+  const mean = sum / length;
 
-  var mean = sum / length;
-  // see http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
-  var variance = sumSqr / length - mean * mean;
-  var stdDev = Math.sqrt(variance);
+  // two pass algorithm to avoid the precision loss of
+  // 'sum of squares minus squared mean' with large values, see
+  // https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+  let sumSqrDiff = 0;
+  for (const val of values) {
+    const diff = val - mean;
+    sumSqrDiff += diff * diff;
+  }
+  const stdDev = Math.sqrt(sumSqrDiff / length);
 
-  return new dwv.math.SimpleStats(min, max, mean, stdDev);
-};
+  return new Statistics(min, max, mean, stdDev);
+}
 
 /**
  * Get full stats: minimum, maximum, mean, standard deviation, median, 25%
  * and 75% percentile of an array of values.
  *
- * @param {Array} array The array of values to extract stats from.
- * @returns {dwv.math.FullStats} A full stats object.
+ * @param {number[]} values The array of values to extract stats from,
+ *   left unchanged.
+ * @returns {Statistics|undefined} Complete statistics (includes median,
+ *   p25 and p75), undefined if the input array is empty.
  */
-dwv.math.getFullStats = function (array) {
-  // get simple stats
-  var simpleStats = dwv.math.getSimpleStats(array);
+function getFullStats(values) {
+  // get basic stats
+  const stats = getBasicStats(values);
+  if (typeof stats === 'undefined') {
+    return undefined;
+  }
 
-  // sort array... can get slow...
-  array.sort(function (a, b) {
+  // sort a copy to not modify the input... can get slow...
+  const sorted = values.slice().sort(function (a, b) {
     return a - b;
   });
 
-  var median = dwv.math.getPercentile(array, 0.5);
-  var p25 = dwv.math.getPercentile(array, 0.25);
-  var p75 = dwv.math.getPercentile(array, 0.75);
+  stats.median = getPercentile(sorted, 0.5);
+  stats.p25 = getPercentile(sorted, 0.25);
+  stats.p75 = getPercentile(sorted, 0.75);
 
-  return new dwv.math.FullStats(
-    simpleStats.getMin(),
-    simpleStats.getMax(),
-    simpleStats.getMean(),
-    simpleStats.getStdDev(),
-    median,
-    p25,
-    p75
-  );
-};
+  return stats;
+}
 
 /**
  * Get an arrays' percentile. Uses linear interpolation for percentiles
- * that lie between data points.
- * see https://en.wikipedia.org/wiki/Percentile (second variant interpolation)
+ *   that lie between data points.
+ * See: {@link https://en.wikipedia.org/wiki/Percentile} (second variant interpolation).
  *
- * @param {Array} array The sorted array of values.
+ * @param {number[]} values The sorted array of values.
  * @param {number} ratio The percentile ratio [0-1].
- * @returns {number} The percentile,
+ * @returns {number} The percentile.
  */
-dwv.math.getPercentile = function (array, ratio) {
+function getPercentile(values, ratio) {
   // check input
-  if (array.length === 0) {
+  if (values.length === 0) {
     throw new Error('Empty array provided for percentile calculation.');
   }
   if (ratio < 0 || ratio > 1) {
     throw new Error(
-      'Invalid ratio provided for percentile calculation: ' + ratio);
+      `Invalid ratio provided for percentile calculation: ${ratio}`);
   }
-  // return min for ratio=0 amd max for ratio=1
-  if (ratio === 0) {
-    return array[0];
-  } else if (ratio === 1) {
-    return array[array.length - 1];
+  // interpolate between indices if needed
+  const i = (values.length - 1) * ratio;
+  const i0 = Math.floor(i);
+  const v0 = values[i0];
+  // no interpolation for an exact index (includes ratio 0 and 1,
+  // and single value arrays)
+  if (i === i0) {
+    return v0;
   }
-  // general case: interpolate between indices if needed
-  var i = (array.length - 1) * ratio;
-  var i0 = Math.floor(i);
-  var v0 = array[i0];
-  var v1 = array[i0 + 1];
+  const v1 = values[i0 + 1];
   return v0 + (v1 - v0) * (i - i0);
-};
+}
 
 /**
  * Unique ID generator.
+ *
  * See {@link http://stackoverflow.com/questions/105034/create-guid-uuid-in-javascript}
- * and this {@link http://stackoverflow.com/a/13403498 answer}.
+ *   and this {@link http://stackoverflow.com/a/13403498 answer}.
  *
  * @returns {string} A unique ID.
  */
-dwv.math.guid = function () {
+export function guid() {
   return Math.random().toString(36).substring(2, 15);
-};
+}

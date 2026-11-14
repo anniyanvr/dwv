@@ -1,216 +1,125 @@
-// namespaces
-var dwv = dwv || {};
-dwv.tool = dwv.tool || {};
+import {ScrollWheelBehavior} from './behaviors/wheelBehavior.js';
+import {LayerGroupPointer} from './layerGroupPointer.js';
+import {ScrollDragBehavior} from './behaviors/dragBehavior.js';
+import {PlayDoubleClickBehavior} from './behaviors/doubleClickBehavior.js';
+import {TooltipHoverBehavior} from './behaviors/hoverBehavior.js';
+import {PositionSetTapBehavior} from './behaviors/tapBehavior.js';
+
+/**
+ * @import {App} from '../app/application.js';
+ */
 
 /**
  * Scroll class.
+ * A tap sets the current position and fires a `tap` event with the
+ * annotations and segments under it (see {@link PositionSetTapBehavior}).
  *
- * @class
- * @param {object} app The associated application.
+ * @example
+ * import {App, AppOptions, ViewConfig, ToolConfig} from '//esm.sh/dwv';
+ * // create the dwv app
+ * const app = new App();
+ * // initialise
+ * const viewConfig0 = new ViewConfig('layerGroup0');
+ * const viewConfigs = {'*': [viewConfig0]};
+ * const options = new AppOptions(viewConfigs);
+ * options.tools = {Scroll: new ToolConfig()};
+ * app.init(options);
+ * // activate tool
+ * app.addEventListener('load', function () {
+ *   app.setTool('Scroll');
+ * });
+ * // load dicom data
+ * app.loadURLs([
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323851.dcm',
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323707.dcm',
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323563.dcm'
+ * ]);
+ * @example <caption>Example with slider</caption>
+ * import {App, AppOptions, ViewConfig, ToolConfig, Index} from '//esm.sh/dwv';
+ * // create the dwv app
+ * const app = new App();
+ * // initialise
+ * const viewConfig0 = new ViewConfig('layerGroup0');
+ * const viewConfigs = {'*': [viewConfig0]};
+ * const options = new AppOptions(viewConfigs);
+ * options.tools = {Scroll: new ToolConfig()};
+ * app.init(options);
+ * // create range
+ * const range = document.createElement('input');
+ * range.type = 'range';
+ * range.min = 0;
+ * range.id = 'sliceRange';
+ * document.body.appendChild(range);
+ * // update app on slider change
+ * range.oninput = function () {
+ *   const stgCtrl = app.getStageController();
+ *   const lg = stgCtrl.getLayerGroupByDivId('layerGroup0');
+ *   const vl = lg.getBaseViewLayer();
+ *   const vc = vl.getViewController();
+ *   const index = vc.getCurrentIndex();
+ *   const values = index.getValues();
+ *   values[2] = this.value;
+ *   vc.setCurrentIndex(new Index(values));
+ * }
+ * // activate tool and update range max on load
+ * app.addEventListener('load', function () {
+ *   app.setTool('Scroll');
+ *   const dataCtrl = app.getDataController();
+ *   const size = dataCtrl.get(0).image.getGeometry().getSize();
+ *   range.max = size.get(2) - 1;
+ * });
+ * // update slider on slice change (for ex via mouse wheel)
+ * app.addEventListener('positionchange', function () {
+ *   const stgCtrl = app.getStageController();
+ *   const lg = stgCtrl.getLayerGroupByDivId('layerGroup0');
+ *   const vl = lg.getBaseViewLayer();
+ *   const vc = vl.getViewController();
+ *   range.value = vc.getCurrentIndex().get(2);
+ * });
+ * // load dicom data
+ * app.loadURLs([
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323851.dcm',
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323707.dcm',
+ *   'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323563.dcm'
+ * ]);
  */
-dwv.tool.Scroll = function (app) {
+export class Scroll extends LayerGroupPointer {
   /**
-   * Closure to self: to be used by event handlers.
+   * Associated app.
    *
-   * @private
-   * @type {dwv.tool.Scroll}
+   * @type {App}
    */
-  var self = this;
-  /**
-   * Interaction start flag.
-   *
-   * @type {boolean}
-   */
-  this.started = false;
-  // touch timer ID (created by setTimeout)
-  var touchTimerID = null;
+  #app;
 
   /**
-   * Handle mouse down event.
+   * Hover tooltip behaviour (slice index tooltip when enabled).
    *
-   * @param {object} event The mouse down event.
+   * @type {TooltipHoverBehavior}
    */
-  this.mousedown = function (event) {
-    // stop viewer if playing
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-    if (viewController.isPlaying()) {
-      viewController.stop();
-    }
-    // start flag
-    self.started = true;
-    // first position
-    self.x0 = event._x;
-    self.y0 = event._y;
-  };
+  #tooltipHover;
 
   /**
-   * Handle mouse move event.
-   *
-   * @param {object} event The mouse move event.
+   * @param {App} app The associated application.
    */
-  this.mousemove = function (event) {
-    if (!self.started) {
-      return;
-    }
+  constructor(app) {
+    const tooltipHover = new TooltipHoverBehavior();
+    const tapBehavior = new PositionSetTapBehavior();
+    super({
+      stageController: app.getStageController(),
+      dragBehavior: new ScrollDragBehavior(),
+      hoverBehavior: tooltipHover,
+      wheelBehavior: new ScrollWheelBehavior(),
+      doubleClickBehavior: new PlayDoubleClickBehavior(),
+      tapBehavior
+    });
+    this.#app = app;
+    this.#tooltipHover = tooltipHover;
 
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-
-    // difference to last Y position
-    var diffY = event._y - self.y0;
-    var yMove = (Math.abs(diffY) > 15);
-    // do not trigger for small moves
-    if (yMove) {
-      // update view controller
-      if (diffY > 0) {
-        viewController.decrementSliceNb();
-      } else {
-        viewController.incrementSliceNb();
-      }
-    }
-
-    // difference to last X position
-    var diffX = event._x - self.x0;
-    var xMove = (Math.abs(diffX) > 15);
-    // do not trigger for small moves
-    if (xMove) {
-      // update view controller
-      if (diffX > 0) {
-        viewController.incrementFrameNb();
-      } else {
-        viewController.decrementFrameNb();
-      }
-    }
-
-    // reset origin point
-    if (xMove) {
-      self.x0 = event._x;
-    }
-    if (yMove) {
-      self.y0 = event._y;
-    }
-  };
-
-  /**
-   * Handle mouse up event.
-   *
-   * @param {object} _event The mouse up event.
-   */
-  this.mouseup = function (_event) {
-    if (self.started) {
-      // stop recording
-      self.started = false;
-    }
-  };
-
-  /**
-   * Handle mouse out event.
-   *
-   * @param {object} event The mouse out event.
-   */
-  this.mouseout = function (event) {
-    self.mouseup(event);
-  };
-
-  /**
-   * Handle touch start event.
-   *
-   * @param {object} event The touch start event.
-   */
-  this.touchstart = function (event) {
-    // long touch triggers the dblclick
-    touchTimerID = setTimeout(self.dblclick, 500);
-    // call mouse equivalent
-    self.mousedown(event);
-  };
-
-  /**
-   * Handle touch move event.
-   *
-   * @param {object} event The touch move event.
-   */
-  this.touchmove = function (event) {
-    // abort timer if move
-    if (touchTimerID !== null) {
-      clearTimeout(touchTimerID);
-      touchTimerID = null;
-    }
-    // call mouse equivalent
-    self.mousemove(event);
-  };
-
-  /**
-   * Handle touch end event.
-   *
-   * @param {object} event The touch end event.
-   */
-  this.touchend = function (event) {
-    // abort timer
-    if (touchTimerID !== null) {
-      clearTimeout(touchTimerID);
-      touchTimerID = null;
-    }
-    // call mouse equivalent
-    self.mouseup(event);
-  };
-
-  /**
-   * Handle mouse scroll event (fired by Firefox).
-   *
-   * @param {object} event The mouse scroll event.
-   */
-  this.DOMMouseScroll = function (event) {
-    // ev.detail on firefox is 3
-    if (event.detail < 0) {
-      mouseScroll(true);
-    } else {
-      mouseScroll(false);
-    }
-  };
-
-  /**
-   * Handle mouse wheel event.
-   *
-   * @param {object} event The mouse wheel event.
-   */
-  this.mousewheel = function (event) {
-    // ev.wheelDelta on chrome is 120
-    if (event.wheelDelta > 0) {
-      mouseScroll(true);
-    } else {
-      mouseScroll(false);
-    }
-  };
-
-  /**
-   * Mouse scroll action.
-   *
-   * @param {boolean} up True to increment, false to decrement.
-   * @private
-   */
-  function mouseScroll(up) {
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-
-    var hasSlices =
-      (app.getImage().getGeometry().getSize().getNumberOfSlices() !== 1);
-    var hasFrames = (app.getImage().getNumberOfFrames() !== 1);
-    if (up) {
-      if (hasSlices) {
-        viewController.incrementSliceNb();
-      } else if (hasFrames) {
-        viewController.incrementFrameNb();
-      }
-    } else {
-      if (hasSlices) {
-        viewController.decrementSliceNb();
-      } else if (hasFrames) {
-        viewController.decrementFrameNb();
-      }
+    for (const type of this.getEventNames()) {
+      tapBehavior.addEventListener(type, (e) => {
+        const ce = /** @type {CustomEvent} */ (e);
+        this.dispatchEvent(new CustomEvent(type, {detail: ce.detail}));
+      });
     }
   }
 
@@ -219,56 +128,48 @@ dwv.tool.Scroll = function (app) {
    *
    * @param {object} event The key down event.
    */
-  this.keydown = function (event) {
-    event.context = 'dwv.tool.Scroll';
-    app.onKeydown(event);
-  };
-  /**
-   * Handle double click.
-   *
-   * @param {object} _event The key down event.
-   */
-  this.dblclick = function (_event) {
-    var layerController = app.getLayerController();
-    var viewController =
-      layerController.getActiveViewLayer().getViewController();
-    viewController.play();
+  keydown = (event) => {
+    event.context = 'Scroll';
+    this.#app.onKeydown(event);
   };
 
   /**
    * Activate the tool.
    *
-   * @param {boolean} _bool The flag to activate or not.
+   * @param {boolean} bool The flag to activate or not.
    */
-  this.activate = function (_bool) {
-    // does nothing
-  };
+  activate(bool) {
+    if (!bool) {
+      this.cancel();
+    }
+  }
+
+  /**
+   * Set the tool live features: slice tooltip on hover.
+   *
+   * @param {object} features The list of features.
+   * @param {boolean} [features.displayTooltip] Show tooltip on mouse move.
+   */
+  setFeatures(features) {
+    if (typeof features.displayTooltip !== 'undefined') {
+      this.#tooltipHover.setTooltipEnabled(Boolean(features.displayTooltip));
+    }
+  }
 
   /**
    * Initialise the tool.
    */
-  this.init = function () {
+  init() {
     // does nothing
-  };
+  }
 
-}; // Scroll class
+  /**
+   * Get the list of event names that this tool can fire.
+   *
+   * @returns {string[]} The list of event names.
+   */
+  getEventNames() {
+    return ['tap'];
+  }
 
-/**
- * Help for this tool.
- *
- * @returns {object} The help content.
- */
-dwv.tool.Scroll.prototype.getHelpKeys = function () {
-  return {
-    title: 'tool.Scroll.name',
-    brief: 'tool.Scroll.brief',
-    mouse: {
-      mouse_drag: 'tool.Scroll.mouse_drag',
-      double_click: 'tool.Scroll.double_click'
-    },
-    touch: {
-      touch_drag: 'tool.Scroll.touch_drag',
-      tap_and_hold: 'tool.Scroll.tap_and_hold'
-    }
-  };
-};
+} // Scroll class

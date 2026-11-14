@@ -1,7 +1,69 @@
-// namespaces
-var dwv = dwv || {};
-/** @namespace */
-dwv.image = dwv.image || {};
+import {Index} from '../math/index.js';
+import {Point3D} from '../math/point.js';
+import {logger} from '../utils/logger.js';
+import {arrayContains} from '../utils/array.js';
+import {getTypedArrayLike} from '../dicom/dicomParser.js';
+import {RescaleSlopeAndIntercept} from './rsi.js';
+import {isMonochrome} from '../dicom/dicomImage.js';
+import {ResamplingThread} from './resamplingThread.js';
+import {BooleanResult} from '../utils/result.js';
+import {equalWl} from './windowLevel.js';
+import {ImageHistogram} from './imageHistogram.js';
+
+/**
+ * @import {Geometry} from './geometry.js';
+ * @import {Matrix33} from '../math/matrix.js';
+ * @import {NumberRange} from '../math/number.js';
+ * @import {RGB} from '../utils/colour.js';
+ * @import {ColourMap} from './luts.js';
+ * @import {Point} from '../math/point.js';
+ * @import {MaskImage} from './maskImage.js';
+ * @import {TypedArray} from '../math/types.js';
+ * @import {VolumeId} from './types.js';
+ * @import {VolumeValue} from '../dicom/types.js';
+ */
+
+
+/**
+ * List of image event names.
+ *
+ * @type {string[]}
+ */
+export const imageEventNames = [
+  'imagecontentchange',
+  'imagegeometrychange',
+  'imageresamplingstart',
+  'imageresamplingcomplete',
+  'imageresampled',
+  'labelingstart',
+  'labelschanged'
+];
+
+/**
+ * Get the slice index of an input slice into a volume geometry.
+ *
+ * @param {Geometry} volumeGeometry The volume geometry.
+ * @param {Geometry} sliceGeometry The slice geometry.
+ * @returns {Index} The index of the slice in the volume geomtry.
+ */
+function getSliceIndex(volumeGeometry, sliceGeometry) {
+  // possible time
+  const timeId = sliceGeometry.getInitialTime()?.id.value;
+  // index values
+  const values = [];
+  // x, y
+  values.push(0);
+  values.push(0);
+  // z
+  values.push(volumeGeometry.getSliceIndex(sliceGeometry.getOrigin(), timeId));
+  // time: volume index if the time is a volume id
+  if (typeof timeId !== 'undefined') {
+    const volumeIndex = volumeGeometry.getVolumeIndex(timeId);
+    values.push(volumeIndex !== -1 ? volumeIndex : timeId);
+  }
+  // return index
+  return new Index(values);
+}
 
 /**
  * Image class.
@@ -10,528 +72,1260 @@ dwv.image = dwv.image || {};
  * - photometric interpretation (default MONOCHROME2),
  * - planar configuration (default RGBRGB...).
  *
- * @class
- * @param {object} geometry The geometry of the image.
- * @param {Array} buffer The image data as an array of frame buffers.
- * @param {number} numberOfFrames The number of frames (optional, can be used
-     to anticipate the final number after appends).
- * @param {Array} imageUids An array of Uids indexed to slice number.
+ * @example
+ * import {DicomParser, demoCreateImage} from '//esm.sh/dwv';
+ * // XMLHttpRequest onload callback
+ * const onload = function (event) {
+ *   // parse the dicom buffer
+ *   const dicomParser = new DicomParser();
+ *   dicomParser.parse(event.target.response);
+ *   // create the image object
+ *   const image = demoCreateImage(dicomParser.getDicomElements());
+ *   // result div
+ *   const div = document.getElementById('dwv');
+ *   // display the image size
+ *   const size = image.getGeometry().getSize();
+ *   div.appendChild(document.createTextNode(
+ *     'Size: ' + size.toString() +
+ *     ' (should be 256,256,1)'));
+ *   // break line
+ *   div.appendChild(document.createElement('br'));
+ *   // display a pixel value
+ *   div.appendChild(document.createTextNode(
+ *     'Pixel @ [128,40,0]: ' +
+ *     image.getRescaledValue(128,40,0) +
+ *     ' (should be 101)'));
+ * };
+ * // DICOM file request
+ * const request = new XMLHttpRequest();
+ * const url = 'https://raw.githubusercontent.com/ivmartel/dwv/master/tests/data/bbmri-53323851.dcm';
+ * request.open('GET', url);
+ * request.responseType = 'arraybuffer';
+ * request.onload = onload;
+ * request.send();
  */
-dwv.image.Image = function (geometry, buffer, numberOfFrames, imageUids) {
-  // use buffer length in not specified
-  if (typeof numberOfFrames === 'undefined') {
-    numberOfFrames = buffer.length;
-  }
+export class Image extends EventTarget {
 
   /**
-   * Get the number of frames.
+   * Data geometry.
    *
-   * @returns {number} The number of frames.
+   * @type {Geometry}
    */
-  this.getNumberOfFrames = function () {
-    return numberOfFrames;
-  };
+  #geometry;
 
   /**
-   * Rescale slope and intercept.
+   * Constructor signature shared by {@link Image} and its subclasses,
+   * used by {@link Image#clone} to build the copy via the concrete
+   * (possibly subclassed) constructor.
    *
-   * @private
-   * @type {number}
+   * @typedef {function(new:Image, Geometry, TypedArray, Array<string>=)}
+   *   ImageConstructor
    */
-  var rsis = [];
-  // initialise RSIs
-  for (var s = 0, nslices = geometry.getSize().getNumberOfSlices();
-    s < nslices; ++s) {
-    rsis.push(new dwv.image.RescaleSlopeAndIntercept(1, 0));
-  }
+
+  /**
+   * Data buffer.
+   *
+   * @type {TypedArray}
+   */
+  #buffer;
+
+  /**
+   * Whether the image has been resampled or not.
+   *
+   * @type {boolean}
+   */
+  #resampled;
+
+  /**
+   * The ID of the current resampling job.
+   *
+   * @type {string}
+   */
+  #resamplingJobId;
+
+  /**
+   * Data geometry, unmodified if image is resampled, null otherwise.
+   *
+   * @type {Geometry}
+   */
+  #rawGeometry;
+
+  /**
+   * Data buffer, unmodified if image is resampled, null otherwise.
+   *
+   * @type {TypedArray}
+   */
+  #rawBuffer;
+
+  /**
+   * Image UIDs.
+   *
+   * @type {string[]}
+   */
+  #imageUids;
+
+  /**
+   * Constant rescale slope and intercept (default).
+   *
+   * @type {RescaleSlopeAndIntercept}
+   */
+  #rsi = new RescaleSlopeAndIntercept(1, 0);
+
+  /**
+   * Varying rescale slope and intercept.
+   *
+   * @type {RescaleSlopeAndIntercept[]}
+   */
+  #rsis = null;
+
   /**
    * Flag to know if the RSIs are all identity (1,0).
    *
-   * @private
    * @type {boolean}
    */
-  var isIdentityRSI = true;
+  #isIdentityRSI = true;
+
   /**
    * Flag to know if the RSIs are all equals.
    *
-   * @private
    * @type {boolean}
    */
-  var isConstantRSI = true;
+  #isConstantRSI = true;
+
   /**
    * Photometric interpretation (MONOCHROME, RGB...).
    *
-   * @private
    * @type {string}
    */
-  var photometricInterpretation = 'MONOCHROME2';
-  /**
-   * Planar configuration for RGB data (0:RGBRGBRGBRGB... or
-   *   1:RRR...GGG...BBB...).
-   *
-   * @private
-   * @type {number}
-   */
-  var planarConfiguration = 0;
+  #photometricInterpretation = 'MONOCHROME2';
 
   /**
-   * Check if the input element is not null.
+   * Palette colour map.
    *
-   * @param {object} element The element to test.
-   * @returns {boolean} True if the input is not null.
+   * @type {ColourMap}
    */
-  var isNotNull = function (element) {
-    return element !== null;
-  };
+  #paletteColourMap;
+
+  /**
+   * Planar configuration for RGB data (`0:RGBRGBRGBRGB...` or
+   *   `1:RRR...GGG...BBB...`).
+   *
+   * @type {number}
+   */
+  #planarConfiguration = 0;
 
   /**
    * Number of components.
    *
-   * @private
    * @type {number}
    */
-  var numberOfComponents = buffer.find(isNotNull).length / (
-    geometry.getSize().getTotalSize());
-    /**
-     * Meta information.
-     *
-     * @private
-     * @type {object}
-     */
-  var meta = {};
+  #numberOfComponents;
+
+  /**
+   * Meta information.
+   *
+   * @type {Record<string, any>}
+   */
+  #meta = {};
 
   /**
    * Data range.
    *
-   * @private
-   * @type {object}
+   * @type {NumberRange}
    */
-  var dataRange = null;
+  #dataRange = null;
+
   /**
    * Rescaled data range.
    *
-   * @private
-   * @type {object}
+   * @type {NumberRange}
    */
-  var rescaledDataRange = null;
+  #rescaledDataRange = null;
+
   /**
    * Histogram.
    *
-   * @private
-   * @type {Array}
+   * @type {ImageHistogram|null}
    */
-  var histogram = null;
+  #histogram = null;
 
   /**
-   * Get the image UIDs indexed by slice number.
+   * The resampling thread.
    *
-   * @returns {Array} The UIDs array.
+   * @type {ResamplingThread}
    */
-  this.getImageUids = function () {
-    return imageUids;
-  };
+  #resamplingThread;
+
+  /**
+   * Image complete flag, default to false.
+   *
+   * @type {boolean}
+   */
+  #complete = false;
+
+  /**
+   * @param {Geometry} geometry The geometry of the image.
+   * @param {TypedArray} buffer The image data as a one dimensional buffer.
+   * @param {string[]} [imageUids] An array of Uids indexed to slice number.
+   */
+  constructor(geometry, buffer, imageUids) {
+    super();
+    this.#geometry = geometry;
+    this.#buffer = buffer;
+    this.#resampled = false;
+    this.#resamplingJobId = '0';
+    this.#rawGeometry = null;
+    this.#rawBuffer = null;
+    this.#imageUids = imageUids;
+    this.#resamplingThread = null;
+
+    this.#numberOfComponents = this.#buffer.length / (
+      this.#geometry.getSize().getTotalSize());
+  }
+
+  /**
+   * Set the image complete flag.
+   *
+   * @param {boolean} flag True if the data is complete.
+   */
+  setComplete(flag) {
+    this.#complete = flag;
+    if (flag) {
+      this.#geometry.updateSliceSpacing();
+    }
+  }
+
+  /**
+   * Get the image complete flag.
+   *
+   * @returns {boolean} True if the data is complete.
+   */
+  getComplete() {
+    return this.#complete;
+  }
+
+  /**
+   * Get the initial index, used as default position by views:
+   * the middle of the image (first frame for 4D).
+   *
+   * @returns {Index} The index.
+   */
+  getInitialIndex() {
+    const size = this.#geometry.getSize();
+    const values = new Array(size.length()).fill(0);
+    for (let i = 0; i < Math.min(3, values.length); ++i) {
+      values[i] = Math.floor(size.get(i) / 2);
+    }
+    return new Index(values);
+  }
+
+  /**
+   * Check whether the image has overlapping segments. Always false for a
+   * plain image; {@link MaskImage} overrides this with a real check.
+   *
+   * @returns {boolean} False.
+   * @deprecated Since v0.37, please use `instanceof MaskImage` and
+   *   `MaskImage#getHasOverlap` instead.
+   */
+  getHasOverlap() {
+    return false;
+  }
+
+  /**
+   * Get the image UID at a given index.
+   *
+   * @param {Index} [index] The index at which to get the id.
+   * @returns {string} The UID.
+   */
+  getImageUid(index) {
+    let uid = this.#imageUids[0];
+    if (this.#imageUids.length !== 1 && typeof index !== 'undefined') {
+      uid = this.#imageUids[this.getSecondaryOffset(index)];
+    }
+    return uid;
+  }
+
+  /**
+   * Get the image origin for a image UID.
+   *
+   * @param {string} uid The UID.
+   * @returns {Point3D|undefined} The origin.
+   */
+  getOriginForImageUid(uid) {
+    let origin;
+    const uidIndex = this.#imageUids.indexOf(uid);
+    if (uidIndex !== -1) {
+      const origins = this.getGeometry().getOrigins();
+      origin = origins[uidIndex % origins.length];
+    }
+    return origin;
+  }
+
+  /**
+   * Check if the image includes an UID.
+   *
+   * @param {string} uid The UID.
+   * @returns {boolean} True if present.
+   */
+  includesImageUid(uid) {
+    return this.#imageUids.includes(uid);
+  }
+
+  /**
+   * Check if this image includes the input uids.
+   *
+   * @param {string[]} uids UIDs to test for presence.
+   * @returns {boolean} True if all uids are in this image uids.
+   */
+  containsImageUids(uids) {
+    return arrayContains(this.#imageUids, uids);
+  }
 
   /**
    * Get the geometry of the image.
    *
-   * @returns {object} The size of the image.
+   * @returns {Geometry} The geometry.
    */
-  this.getGeometry = function () {
-    return geometry;
-  };
+  getGeometry() {
+    return this.#geometry;
+  }
 
   /**
    * Get the data buffer of the image.
    *
-   * @todo dangerous...
-   * @returns {Array} The data buffer of the image.
+   * @todo Dangerous...
+   * @returns {TypedArray} The data buffer of the image.
    */
-  this.getBuffer = function () {
-    return buffer;
-  };
+  getBuffer() {
+    return this.#buffer;
+  }
+
   /**
-   * Get the data buffer of the image.
+   * Can the image values be quantified?
    *
-   * @param {number} frame The frame number.
-   * @todo dangerous...
-   * @returns {Array} The data buffer of the frame.
+   * @returns {boolean} True if only one component.
    */
-  this.getFrame = function (frame) {
-    return buffer[frame];
-  };
+  canQuantify() {
+    return this.getNumberOfComponents() === 1;
+  }
+
+  /**
+   * Can window and level be applied to the data?
+   *
+   * @returns {boolean} True if the data is monochrome.
+   * @deprecated Since v0.33, please use isMonochrome instead.
+   */
+  canWindowLevel() {
+    return this.isMonochrome();
+  }
+
+  /**
+   * Is the data monochrome.
+   *
+   * @returns {boolean} True if the data is monochrome.
+   */
+  isMonochrome() {
+    return isMonochrome(this.getPhotometricInterpretation());
+  }
+
+  /**
+   * Check is the image is a mask.
+   *
+   * @returns {boolean} True if mask.
+   * @deprecated Since v0.37, please use `instanceof MaskImage` instead.
+   */
+  isMask() {
+    return false;
+  }
+
+  /**
+   * Can the data be scrolled?
+   *
+   * @param {Matrix33} viewOrientation The view orientation.
+   * @returns {boolean} True if the data has a third dimension greater than one
+   *   after applying the view orientation.
+   */
+  canScroll(viewOrientation) {
+    const size = this.getGeometry().getSize();
+    // also check the slice capacity in case we are in the middle of a load
+    let sliceCapacity = 1;
+    if (typeof this.#meta.sliceCapacity !== 'undefined') {
+      sliceCapacity = this.#meta.sliceCapacity;
+    }
+    return size.canScroll(viewOrientation) || sliceCapacity !== 1;
+  }
+
+  /**
+   * Get the secondary offset max.
+   *
+   * @returns {number} The maximum offset.
+   */
+  #getSecondaryOffsetMax() {
+    return this.#geometry.getSize().getTotalSize(2);
+  }
+
+  /**
+   * Get the secondary offset: an offset that takes into account
+   *   the slice and above dimension numbers.
+   *
+   * @param {Index} index The index.
+   * @returns {number} The offset.
+   */
+  getSecondaryOffset(index) {
+    return this.#geometry.getSize().indexToOffset(index, 2);
+  }
 
   /**
    * Get the rescale slope and intercept.
    *
-   * @param {number} k The slice index.
-   * @returns {object} The rescale slope and intercept.
+   * @param {Index} [index] The index (only needed for non constant rsi).
+   * @returns {RescaleSlopeAndIntercept} The rescale slope and intercept.
    */
-  this.getRescaleSlopeAndIntercept = function (k) {
-    return rsis[k];
-  };
+  getRescaleSlopeAndIntercept(index) {
+    let res = this.#rsi;
+    if (!this.isConstantRSI()) {
+      if (typeof index === 'undefined') {
+        throw new Error('Cannot get non constant RSI with empty slice index.');
+      }
+      const offset = this.getSecondaryOffset(index);
+      if (typeof this.#rsis[offset] !== 'undefined') {
+        res = this.#rsis[offset];
+      } else {
+        logger.warn(`undefined non constant rsi at ${offset}`);
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Get the rsi at a specified (secondary) offset.
+   *
+   * @param {number} offset The desired (secondary) offset.
+   * @returns {RescaleSlopeAndIntercept} The coresponding rsi.
+   */
+  #getRescaleSlopeAndInterceptAtOffset(offset) {
+    return this.#rsis[offset];
+  }
+
   /**
    * Set the rescale slope and intercept.
    *
-   * @param {Array} inRsi The input rescale slope and intercept.
-   * @param {number} k The slice index (optional).
+   * @param {RescaleSlopeAndIntercept} inRsi The input rescale
+   *   slope and intercept.
+   * @param {number} [offset] The rsi offset (only needed for non constant rsi).
    */
-  this.setRescaleSlopeAndIntercept = function (inRsi, k) {
-    if (typeof k === 'undefined') {
-      k = 0;
+  setRescaleSlopeAndIntercept(inRsi, offset) {
+    // update identity flag
+    this.#isIdentityRSI = this.#isIdentityRSI && inRsi.isID();
+    // update constant flag
+    if (!this.#isConstantRSI) {
+      if (typeof offset === 'undefined') {
+        throw new Error(
+          'Cannot store non constant RSI with empty slice index.');
+      }
+      this.#rsis.splice(offset, 0, inRsi);
+    } else if (!this.#rsi.equals(inRsi)) {
+      if (typeof offset === 'undefined') {
+        // no slice index, replace existing
+        this.#rsi = inRsi;
+      } else {
+        // first non constant rsi
+        this.#isConstantRSI = false;
+        // switch to non constant mode
+        this.#rsis = [];
+        // initialise RSIs
+        for (let i = 0, leni = this.#getSecondaryOffsetMax(); i < leni; ++i) {
+          this.#rsis.push(this.#rsi);
+        }
+        // store
+        this.#rsi = null;
+        this.#rsis.splice(offset, 0, inRsi);
+      }
     }
-    rsis[k] = inRsi;
+  }
 
-    // update RSI flags
-    isIdentityRSI = true;
-    isConstantRSI = true;
-    for (var s = 0, lens = rsis.length; s < lens; ++s) {
-      if (!rsis[s].isID()) {
-        isIdentityRSI = false;
-      }
-      if (s > 0 && !rsis[s].equals(rsis[s - 1])) {
-        isConstantRSI = false;
-      }
-    }
-  };
   /**
    * Are all the RSIs identity (1,0).
    *
    * @returns {boolean} True if they are.
    */
-  this.isIdentityRSI = function () {
-    return isIdentityRSI;
-  };
+  isIdentityRSI() {
+    return this.#isIdentityRSI;
+  }
+
   /**
    * Are all the RSIs equal.
    *
    * @returns {boolean} True if they are.
    */
-  this.isConstantRSI = function () {
-    return isConstantRSI;
-  };
+  isConstantRSI() {
+    return this.#isConstantRSI;
+  }
+
   /**
    * Get the photometricInterpretation of the image.
    *
    * @returns {string} The photometricInterpretation of the image.
    */
-  this.getPhotometricInterpretation = function () {
-    return photometricInterpretation;
-  };
+  getPhotometricInterpretation() {
+    return this.#photometricInterpretation;
+  }
+
   /**
    * Set the photometricInterpretation of the image.
    *
    * @param {string} interp The photometricInterpretation of the image.
    */
-  this.setPhotometricInterpretation = function (interp) {
-    photometricInterpretation = interp;
-  };
+  setPhotometricInterpretation(interp) {
+    this.#photometricInterpretation = interp;
+  }
+
+  /**
+   * Set the palette colour map.
+   *
+   * @param {ColourMap} map The colour map.
+   */
+  setPaletteColourMap(map) {
+    this.#paletteColourMap = map;
+    // fire imagecontentchange
+    this.dispatchEvent(new CustomEvent('imagecontentchange'));
+  }
+
+  /**
+   * Get the palette colour map.
+   *
+   * @returns {ColourMap} The colour map.
+   */
+  getPaletteColourMap() {
+    return this.#paletteColourMap;
+  }
+
+  /**
+   * Update the palette colour map.
+   *
+   * @param {number} index The index to change the colour of.
+   * @param {RGB} colour The colour to use at index.
+   */
+  updatePaletteColourMap(index, colour) {
+    this.#paletteColourMap.red[index] = colour.r;
+    this.#paletteColourMap.green[index] = colour.g;
+    this.#paletteColourMap.blue[index] = colour.b;
+    // fire imagecontentchange
+    this.dispatchEvent(new CustomEvent('imagecontentchange'));
+  }
+
   /**
    * Get the planarConfiguration of the image.
    *
    * @returns {number} The planarConfiguration of the image.
    */
-  this.getPlanarConfiguration = function () {
-    return planarConfiguration;
-  };
+  getPlanarConfiguration() {
+    return this.#planarConfiguration;
+  }
+
   /**
    * Set the planarConfiguration of the image.
    *
    * @param {number} config The planarConfiguration of the image.
    */
-  this.setPlanarConfiguration = function (config) {
-    planarConfiguration = config;
-  };
+  setPlanarConfiguration(config) {
+    this.#planarConfiguration = config;
+  }
+
   /**
    * Get the numberOfComponents of the image.
    *
    * @returns {number} The numberOfComponents of the image.
    */
-  this.getNumberOfComponents = function () {
-    return numberOfComponents;
-  };
+  getNumberOfComponents() {
+    return this.#numberOfComponents;
+  }
 
   /**
    * Get the meta information of the image.
    *
-   * @returns {object} The meta information of the image.
+   * @returns {Record<string, any>} The meta information of the image.
    */
-  this.getMeta = function () {
-    return meta;
-  };
+  getMeta() {
+    return this.#meta;
+  }
+
   /**
    * Set the meta information of the image.
    *
-   * @param {object} rhs The meta information of the image.
+   * @param {Record<string, any>} rhs The meta information of the image.
    */
-  this.setMeta = function (rhs) {
-    meta = rhs;
-  };
+  setMeta(rhs) {
+    this.#meta = rhs;
+  }
 
   /**
    * Get value at offset. Warning: No size check...
    *
    * @param {number} offset The desired offset.
-   * @param {number} frame The desired frame.
    * @returns {number} The value at offset.
    */
-  this.getValueAtOffset = function (offset, frame) {
-    return buffer[frame][offset];
-  };
+  getValueAtOffset(offset) {
+    return this.#buffer[offset];
+  }
+
+  /**
+   * Check if the input values are in the buffer.
+   * Could loop through the whole volume, can get long for big data...
+   *
+   * @param {Array} values The values to check.
+   * @returns {boolean[]} A list of booleans for each input value,
+   *   set to true if the value is present in the buffer.
+   */
+  hasValues(values) {
+    // check input
+    if (typeof values === 'undefined' ||
+      values.length === 0) {
+      return [];
+    }
+    // final array value
+    const finalValues = [];
+    for (let v1 = 0; v1 < values.length; ++v1) {
+      if (this.#numberOfComponents === 1) {
+        finalValues.push([values[v1]]);
+      } else if (this.#numberOfComponents === 3) {
+        finalValues.push([
+          values[v1].r,
+          values[v1].g,
+          values[v1].b
+        ]);
+      }
+    }
+    // find callback
+    let equalFunc;
+    if (this.#numberOfComponents === 1) {
+      equalFunc = function (a, b) {
+        return a[0] === b[0];
+      };
+    } else if (this.#numberOfComponents === 3) {
+      equalFunc = function (a, b) {
+        return a[0] === b[0] &&
+          a[1] === b[1] &&
+          a[2] === b[2];
+      };
+    }
+    const getEqualCallback = function (value) {
+      return function (item) {
+        return equalFunc(item, value);
+      };
+    };
+    // main loop
+    const res = new Array(values.length);
+    res.fill(false);
+    const valuesToFind = finalValues.slice();
+    let equal;
+    let indicesToRemove;
+    for (let i = 0, leni = this.#buffer.length;
+      i < leni; i = i + this.#numberOfComponents) {
+      indicesToRemove = [];
+      for (let v = 0; v < valuesToFind.length; ++v) {
+        equal = true;
+        // check value(s)
+        for (let j = 0; j < this.#numberOfComponents; ++j) {
+          if (this.#buffer[i + j] !== valuesToFind[v][j]) {
+            equal = false;
+            break;
+          }
+        }
+        // if found, store answer and add to indices to remove
+        if (equal) {
+          const valIndex = finalValues.findIndex(
+            getEqualCallback(valuesToFind[v]));
+          res[valIndex] = true;
+          indicesToRemove.push(v);
+        }
+      }
+      // remove found values
+      for (let r = 0; r < indicesToRemove.length; ++r) {
+        valuesToFind.splice(indicesToRemove[r], 1);
+      }
+      // exit if no values to find
+      if (valuesToFind.length === 0) {
+        break;
+      }
+    }
+    // return
+    return res;
+  }
 
   /**
    * Clone the image.
    *
    * @returns {Image} A clone of this image.
    */
-  this.clone = function () {
+  clone() {
     // clone the image buffer
-    var clonedBuffer = [];
-    for (var f = 0, lenf = this.getNumberOfFrames(); f < lenf; ++f) {
-      clonedBuffer[f] = buffer[f].slice(0);
-    }
-    // create the image copy
-    var copy = new dwv.image.Image(this.getGeometry(), clonedBuffer);
-    // copy the RSIs
-    var nslices = this.getGeometry().getSize().getNumberOfSlices();
-    for (var k = 0; k < nslices; ++k) {
-      copy.setRescaleSlopeAndIntercept(this.getRescaleSlopeAndIntercept(k), k);
+    const clonedBuffer = this.#buffer.slice(0);
+    // create the image copy (via the concrete constructor so a MaskImage
+    // clones into another MaskImage, see MaskImage#clone for the rest of
+    // the mask-specific state)
+    const Ctor = /** @type {ImageConstructor} */ (this.constructor);
+    const copy = new Ctor(
+      this.getGeometry().clone(), clonedBuffer, this.#imageUids);
+    // copy the RSI(s)
+    if (this.isConstantRSI()) {
+      copy.setRescaleSlopeAndIntercept(this.getRescaleSlopeAndIntercept());
+    } else {
+      for (let i = 0; i < this.#getSecondaryOffsetMax(); ++i) {
+        copy.setRescaleSlopeAndIntercept(
+          this.#getRescaleSlopeAndInterceptAtOffset(i), i);
+      }
     }
     // copy extras
     copy.setPhotometricInterpretation(this.getPhotometricInterpretation());
     copy.setPlanarConfiguration(this.getPlanarConfiguration());
-    copy.setMeta(this.getMeta());
+    copy.setPaletteColourMap(structuredClone(this.#paletteColourMap));
+    copy.setMeta(structuredClone(this.getMeta()));
     // return
     return copy;
-  };
+  }
+
+  /**
+   * Replace the inner buffer wholesale (as opposed to editing its content
+   * in place). Primarily intended for subclass use, where a private
+   * (`#`) field on this class isn't reachable directly.
+   *
+   * @param {TypedArray} newBuffer The new buffer.
+   * @fires Image#imagecontentchange
+   */
+  replaceBuffer(newBuffer) {
+    this.#buffer = newBuffer;
+    this.dispatchEvent(new CustomEvent('imagecontentchange'));
+  }
+
+  /**
+   * Re-allocate buffer memory to an input size.
+   *
+   * @param {number} size The new size.
+   * @fires Image#imagebufferrealloc
+   */
+  #realloc(size) {
+    // save buffer
+    let tmpBuffer = this.#buffer;
+    // create new
+    this.#buffer = getTypedArrayLike(this.#buffer, size);
+    if (this.#buffer === null) {
+      throw new Error('Cannot reallocate data for image.');
+    }
+    // put old in new
+    this.#buffer.set(tmpBuffer);
+
+    // force GC
+    // eslint-disable-next-line no-useless-assignment
+    tmpBuffer = null;
+
+    /**
+     * Buffer reallocation event: internal-only signal (not part of
+     * {@link imageEventNames}) for a subclass to re-point any state
+     * aliased to the previous buffer instance, for example MaskImage's
+     * segment collection label map.
+     *
+     * @event Image#imagebufferrealloc
+     * @type {CustomEvent}
+     */
+    this.dispatchEvent(new CustomEvent('imagebufferrealloc'));
+  }
+
+  /**
+   * Shift already-present buffer content to make room for a slice (or
+   * volume of slices) being inserted before the end of the buffer.
+   * No-op if the insertion point is already at (or past) the end.
+   *
+   * @param {number} indexOffset Buffer offset where the new content will
+   *   be written.
+   * @param {number} insertSize Buffer size of the content being inserted.
+   * @param {number} maxOffset Buffer offset marking the end of the
+   *   previously valid content.
+   * @fires Image#imagesliceshift
+   */
+  #shiftSlice(indexOffset, insertSize, maxOffset) {
+    if (indexOffset >= maxOffset) {
+      return;
+    }
+    this.#buffer.set(
+      this.#buffer.subarray(indexOffset, maxOffset),
+      indexOffset + insertSize
+    );
+
+    /**
+     * Buffer slice-shift event: internal-only signal (not part of
+     * {@link imageEventNames}) for a subclass to replicate the same
+     * shift on any of its own buffer-aliased state, for example
+     * MaskImage's contour.
+     *
+     * @event Image#imagesliceshift
+     * @type {CustomEvent}
+     * @property {object} detail The event detail.
+     */
+    this.dispatchEvent(new CustomEvent('imagesliceshift', {
+      detail: {indexOffset, insertSize, maxOffset}
+    }));
+  }
+
+  /**
+   * Check if another image can be appended to this one.
+   *
+   * @param {Image} rhs The image to check.
+   * @returns {BooleanResult} Result with success set to true if
+   *   the image can be appended.
+   */
+  canAppendSlice(rhs) {
+    // check input
+    if (rhs === null) {
+      return {
+        success: false,
+        message: 'Cannot append null slice'
+      };
+    }
+
+    // check geometry
+    const geoCanAppend = this.#geometry.canAppendSlice(rhs.getGeometry());
+    if (!geoCanAppend.success) {
+      return geoCanAppend;
+    }
+
+    return this.#checkMetaEquality(rhs);
+  }
+
+  /**
+   * Check photometric interpretation and meta data equality against
+   * a candidate slice or image to append. Shared by `canAppendSlice`
+   * and `canAppendImage`.
+   *
+   * @param {Image} rhs The image to check.
+   * @returns {BooleanResult} Result with success set to true if
+   *   the meta data is compatible.
+   */
+  #checkMetaEquality(rhs) {
+    if (this.#photometricInterpretation !==
+      rhs.getPhotometricInterpretation()) {
+      return {
+        success: false,
+        message:
+          'Cannot append a slice with different photometric interpretation'
+      };
+    }
+    // all meta should be equal
+    for (const key in this.#meta) {
+      if (
+        key === 'windowPresets' ||
+        key === 'sliceCapacity' ||
+        key === 'custom'
+      ) {
+        continue;
+      }
+      // allow for different series time (for multi-volume)
+      if (key === 'SeriesTime') {
+        continue;
+      }
+
+      if (this.#meta[key] !== rhs.getMeta()[key]) {
+        const message = `Cannot append a slice with different ${ key
+        }: ${this.#meta[key]} != ${rhs.getMeta()[key]}`;
+        return {
+          success: false,
+          message
+        };
+      }
+    }
+
+    return new BooleanResult(true);
+  }
 
   /**
    * Append a slice to the image.
    *
    * @param {Image} rhs The slice to append.
-   * @param {number} frame The frame where to append.
-   * @returns {number} The number of the inserted slice.
+   * @fires Image#imagegeometrychange
    */
-  this.appendSlice = function (rhs, frame) {
-    // check input
-    if (rhs === null) {
-      throw new Error('Cannot append null slice');
-    }
-    var rhsSize = rhs.getGeometry().getSize();
-    var size = geometry.getSize();
-    if (rhsSize.getNumberOfSlices() !== 1) {
-      throw new Error('Cannot append more than one slice');
-    }
-    if (size.getNumberOfColumns() !== rhsSize.getNumberOfColumns()) {
-      throw new Error('Cannot append a slice with different number of columns');
-    }
-    if (size.getNumberOfRows() !== rhsSize.getNumberOfRows()) {
-      throw new Error('Cannot append a slice with different number of rows');
-    }
-    if (!geometry.getOrientation().equals(
-      rhs.getGeometry().getOrientation(), 0.0001)) {
-      throw new Error('Cannot append a slice with different orientation');
-    }
-    if (photometricInterpretation !== rhs.getPhotometricInterpretation()) {
-      throw new Error(
-        'Cannot append a slice with different photometric interpretation');
-    }
-    // all meta should be equal
-    for (var key in meta) {
-      if (key === 'windowPresets') {
-        continue;
-      }
-      if (meta[key] !== rhs.getMeta()[key]) {
-        throw new Error('Cannot append a slice with different ' + key);
-      }
+  appendSlice(rhs) {
+    // check if possible
+    const canAppend = this.canAppendSlice(rhs);
+    if (!canAppend.success) {
+      throw new Error(canAppend.message);
     }
 
-    var f = (typeof frame === 'undefined') ? 0 : frame;
+    // update ranges
+    const rhsRange = rhs.getDataRange();
+    const range = this.getDataRange();
+    this.#dataRange = {
+      min: Math.min(rhsRange.min, range.min),
+      max: Math.max(rhsRange.max, range.max),
+    };
+    const rhsResRange = rhs.getRescaledDataRange();
+    const resRange = this.getRescaledDataRange();
+    this.#rescaledDataRange = {
+      min: Math.min(rhsResRange.min, resRange.min),
+      max: Math.max(rhsResRange.max, resRange.max),
+    };
+
+    let size = this.getGeometry().getSize();
+
+    // possible time
+    const time = rhs.getGeometry().getInitialTime();
+    const timeId = time?.id.value;
+
+    const totalSlices = this.#geometry.getCurrentTotalNumberOfSlices();
+
+    // append frame if needed
+    let isNewFrame = false;
+    if (typeof timeId !== 'undefined' &&
+      !this.#geometry.hasSlicesAtTime(timeId)) {
+      // update grometry
+      this.appendFrame(time, rhs.getGeometry().getOrigin());
+      // update size
+      size = this.#geometry.getSize();
+      // update flag
+      isNewFrame = true;
+    }
+
+    // get slice index
+    const index = getSliceIndex(this.#geometry, rhs.getGeometry());
 
     // calculate slice size
-    var mul = 1;
-    if (photometricInterpretation === 'RGB' ||
-      photometricInterpretation === 'YBR_FULL') {
-      mul = 3;
-    }
-    var sliceSize = mul * size.getSliceSize();
+    const sliceSize = this.#numberOfComponents * size.getDimSize(2);
 
-    // create the new buffer
-    var newBuffer = dwv.dicom.getTypedArray(
-      buffer[f].BYTES_PER_ELEMENT * 8,
-      meta.IsSigned ? 1 : 0,
-      sliceSize * (size.getNumberOfSlices() + 1));
-
-    // append slice at new position
-    var newSliceNb = geometry.getSliceIndex(rhs.getGeometry().getOrigin());
-    if (newSliceNb === 0) {
-      newBuffer.set(rhs.getFrame(f));
-      newBuffer.set(buffer[f], sliceSize);
-    } else if (newSliceNb === size.getNumberOfSlices()) {
-      newBuffer.set(buffer[f]);
-      newBuffer.set(rhs.getFrame(f), size.getNumberOfSlices() * sliceSize);
-    } else {
-      var offset = newSliceNb * sliceSize;
-      newBuffer.set(buffer[f].subarray(0, offset - 1));
-      newBuffer.set(rhs.getFrame(f), offset);
-      newBuffer.set(buffer[f].subarray(offset), offset + sliceSize);
+    // create full buffer if not done yet
+    if (typeof this.#meta.sliceCapacity === 'undefined') {
+      throw new Error('Missing slice capacity for buffer manipulation.');
     }
+    const fullBufferSize = sliceSize * this.#meta.sliceCapacity;
+    if (this.#buffer.length !== fullBufferSize) {
+      this.#realloc(fullBufferSize);
+    }
+
+    // slice index
+    const sliceIndex = index.get(2);
+
+    // slice index including possible 4D
+    let fullSliceIndex = sliceIndex;
+    if (typeof timeId !== 'undefined') {
+      fullSliceIndex +=
+        this.#geometry.getCurrentNumberOfSlicesBeforeTime(timeId);
+    }
+    // offset of the input slice
+    const indexOffset = fullSliceIndex * sliceSize;
+    const maxOffset = totalSlices * sliceSize;
+    // move content if needed
+    this.#shiftSlice(indexOffset, sliceSize, maxOffset);
+    // add new slice content
+    this.#buffer.set(rhs.getBuffer(), indexOffset);
 
     // update geometry
-    geometry.appendOrigin(rhs.getGeometry().getOrigin(), newSliceNb);
+    if (!isNewFrame) {
+      this.#geometry.appendOrigin(
+        rhs.getGeometry().getOrigin(), sliceIndex, timeId);
+    }
     // update rsi
-    rsis.splice(newSliceNb, 0, rhs.getRescaleSlopeAndIntercept(0));
+    // (rhs should just have one rsi)
+    this.setRescaleSlopeAndIntercept(
+      rhs.getRescaleSlopeAndIntercept(), fullSliceIndex);
 
-    // copy to class variables
-    buffer[f] = newBuffer;
+    // current number of images
+    const numberOfImages = this.#imageUids.length;
 
     // insert sop instance UIDs
-    imageUids.splice(newSliceNb, 0, rhs.getImageUids()[0]);
+    this.#imageUids.splice(fullSliceIndex, 0, rhs.getImageUid());
 
     // update window presets
-    if (typeof meta.windowPresets !== 'undefined') {
-      var windowPresets = meta.windowPresets;
-      var rhsPresets = rhs.getMeta().windowPresets;
-      var keys = Object.keys(rhsPresets);
-      var pkey = null;
-      for (var i = 0; i < keys.length; ++i) {
+    if (typeof this.#meta.windowPresets !== 'undefined') {
+      const windowPresets = this.#meta.windowPresets;
+      const rhsPresets = rhs.getMeta().windowPresets;
+      const keys = Object.keys(rhsPresets);
+      let pkey;
+      for (let i = 0; i < keys.length; ++i) {
         pkey = keys[i];
-        if (typeof windowPresets[pkey] !== 'undefined') {
-          if (typeof windowPresets[pkey].perslice !== 'undefined' &&
-            windowPresets[pkey].perslice === true) {
-            // use first new preset wl...
+        const rhsPreset = rhsPresets[pkey];
+        const windowPreset = windowPresets[pkey];
+        if (typeof windowPreset !== 'undefined') {
+          // if not set or false, check perslice
+          if (typeof windowPreset.perslice === 'undefined' ||
+            windowPreset.perslice === false) {
+            // if different preset.wl, mark it as perslice
+            if (!equalWl(windowPreset.wl[0], rhsPreset.wl[0])) {
+              windowPreset.perslice = true;
+              // fill wl array with copy of wl[0]
+              // (loop on number of images minus the existing one)
+              for (let j = 0; j < numberOfImages - 1; ++j) {
+                windowPreset.wl.push(windowPreset.wl[0]);
+              }
+            }
+          }
+          // store (first) rhs preset.wl if needed
+          if (typeof windowPreset.perslice !== 'undefined' &&
+            windowPreset.perslice === true) {
             windowPresets[pkey].wl.splice(
-              newSliceNb, 0, rhsPresets[pkey].wl[0]);
-          } else {
-            windowPresets[pkey] = rhsPresets[pkey];
+              fullSliceIndex, 0, rhsPreset.wl[0]);
           }
         } else {
-          // update
+          // if not defined (it should be), store all
           windowPresets[pkey] = rhsPresets[pkey];
         }
       }
     }
-
-    // return the appended slice number
-    return newSliceNb;
-  };
+    /**
+     * Image geometry change event.
+     *
+     * @event Image#imagegeometrychange
+     * @type {CustomEvent}
+     * @property {object} detail The event detail.
+     */
+    this.dispatchEvent(new CustomEvent('imagegeometrychange'));
+  }
 
   /**
    * Append a frame buffer to the image.
    *
    * @param {object} frameBuffer The frame buffer to append.
+   * @param {number} frameIndex The frame index.
    */
-  this.appendFrameBuffer = function (frameBuffer) {
-    buffer.push(frameBuffer);
-  };
+  appendFrameBuffer(frameBuffer, frameIndex) {
+    // create full buffer if not done yet
+    const size = this.#geometry.getSize();
+    const frameSize = this.#numberOfComponents * size.getDimSize(2);
+    if (typeof this.#meta.sliceCapacity === 'undefined') {
+      throw new Error('Missing slice capacity for frame buffer manipulation.');
+    }
+    const fullBufferSize = frameSize * this.#meta.sliceCapacity;
+    if (this.#buffer.length !== fullBufferSize) {
+      this.#realloc(fullBufferSize);
+    }
+    // check index
+    if (frameIndex >= this.#meta.sliceCapacity) {
+      logger.warn(`Ignoring frame at index ${ frameIndex
+      } (size: ${this.#meta.sliceCapacity})`);
+      return;
+    }
+    // append
+    this.#buffer.set(frameBuffer, frameSize * frameIndex);
+    // update geometry
+    this.appendFrame({id: {value: frameIndex}}, new Point3D(0, 0, 0));
+  }
+
+  /**
+   * Append a frame to the image.
+   *
+   * @param {VolumeId} time The frame time: a volume id or, without
+   *   source, a frame index.
+   * @param {Point3D} origin The origin of the frame.
+   */
+  appendFrame(time, origin) {
+    this.#geometry.appendFrame(origin, time);
+    /**
+     * Append frame event.
+     *
+     * @event Image#appendframe
+     * @type {CustomEvent}
+     * @property {object} detail The event detail.
+     */
+    this.dispatchEvent(new CustomEvent('appendframe'));
+    // memory will be updated at the first appendSlice or appendFrameBuffer
+  }
 
   /**
    * Get the data range.
    *
-   * @returns {object} The data range.
+   * @returns {NumberRange} The data range.
    */
-  this.getDataRange = function () {
-    if (!dataRange) {
-      dataRange = this.calculateDataRange();
+  getDataRange() {
+    if (!this.#dataRange) {
+      this.#dataRange = this.calculateDataRange();
     }
-    return dataRange;
-  };
+    return this.#dataRange;
+  }
 
   /**
    * Get the rescaled data range.
    *
-   * @returns {object} The rescaled data range.
+   * @returns {NumberRange} The rescaled data range.
    */
-  this.getRescaledDataRange = function () {
-    if (!rescaledDataRange) {
-      rescaledDataRange = this.calculateRescaledDataRange();
+  getRescaledDataRange() {
+    if (!this.#rescaledDataRange) {
+      this.#rescaledDataRange = this.calculateRescaledDataRange();
     }
-    return rescaledDataRange;
-  };
+    return this.#rescaledDataRange;
+  }
 
   /**
    * Get the histogram.
    *
-   * @returns {Array} The histogram.
+   * @returns {ImageHistogram} The histogram.
    */
-  this.getHistogram = function () {
-    if (!histogram) {
-      var res = this.calculateHistogram();
-      dataRange = res.dataRange;
-      rescaledDataRange = res.rescaledDataRange;
-      histogram = res.histogram;
+  getHistogram() {
+    if (!this.#histogram) {
+      this.#histogram = this.#calculateHistogram();
+      this.#dataRange = this.#histogram.getRange();
+      this.#rescaledDataRange = this.#histogram.getRescaledRange();
     }
-    return histogram;
-  };
-};
-
-/**
- * Get the value of the image at a specific coordinate.
- *
- * @param {number} i The X index.
- * @param {number} j The Y index.
- * @param {number} k The Z index.
- * @param {number} f The frame number.
- * @returns {number} The value at the desired position.
- * Warning: No size check...
- */
-dwv.image.Image.prototype.getValue = function (i, j, k, f) {
-  var frame = (f || 0);
-  var index = new dwv.math.Index3D(i, j, k);
-  return this.getValueAtOffset(this.getGeometry().indexToOffset(index), frame);
-};
-
-/**
- * Get the rescaled value of the image at a specific coordinate.
- *
- * @param {number} i The X index.
- * @param {number} j The Y index.
- * @param {number} k The Z index.
- * @param {number} f The frame number.
- * @returns {number} The rescaled value at the desired position.
- * Warning: No size check...
- */
-dwv.image.Image.prototype.getRescaledValue = function (i, j, k, f) {
-  var frame = (f || 0);
-  var val = this.getValue(i, j, k, frame);
-  if (!this.isIdentityRSI()) {
-    val = this.getRescaleSlopeAndIntercept(k).apply(val);
+    return this.#histogram;
   }
-  return val;
-};
 
-/**
- * Get the rescaled value of the image at a specific offset.
- *
- * @param {number} offset The desired offset.
- * @param {number} k The Z index.
- * @param {number} f The frame number.
- * @returns {number} The rescaled value at the desired offset.
- * Warning: No size check...
- */
-dwv.image.Image.prototype.getRescaledValueAtOffset = function (offset, k, f) {
-  var frame = (f || 0);
-  var val = this.getValueAtOffset(offset, frame);
-  if (!this.isIdentityRSI()) {
-    val = this.getRescaleSlopeAndIntercept(k).apply(val);
+  /**
+   * Get the value of the image at a specific coordinate.
+   *
+   * @param {number} i The X index.
+   * @param {number} j The Y index.
+   * @param {number} k The Z index.
+   * @param {number} [f] Optional frame number.
+   * @returns {number} The value at the desired position.
+   * Warning: No size check...
+   */
+  getValue(i, j, k, f) {
+    const values = [i, j, k];
+    if (typeof f !== 'undefined') {
+      values.push(f);
+    }
+    const index = new Index(values);
+    return this.getValueAtOffset(
+      this.getGeometry().getSize().indexToOffset(index));
   }
-  return val;
-};
 
-/**
- * Calculate the data range of the image.
- * WARNING: for speed reasons, only calculated on the first frame...
- *
- * @returns {object} The range {min, max}.
- */
-dwv.image.Image.prototype.calculateDataRange = function () {
-  var size = this.getGeometry().getSize().getTotalSize();
-  var nFrames = 1; //this.getNumberOfFrames();
-  var min = this.getValueAtOffset(0, 0);
-  var max = min;
-  var value = 0;
-  for (var f = 0; f < nFrames; ++f) {
-    for (var i = 0; i < size; ++i) {
-      value = this.getValueAtOffset(i, f);
+  /**
+   * Get the value of the image at a specific index.
+   *
+   * @param {Index} index The index.
+   * @returns {number} The value at the desired position.
+   * Warning: No size check...
+   */
+  getValueAtIndex(index) {
+    return this.getValueAtOffset(
+      this.getGeometry().getSize().indexToOffset(index));
+  }
+
+  /**
+   * Get the rescaled value of the image at a specific position.
+   *
+   * @param {number} i The X index.
+   * @param {number} j The Y index.
+   * @param {number} k The Z index.
+   * @param {number} [f] Optional frame number.
+   * @returns {number} The rescaled value at the desired position.
+   * Warning: No size check...
+   */
+  getRescaledValue(i, j, k, f) {
+    let val = this.getValue(i, j, k, f);
+    if (!this.isIdentityRSI()) {
+      if (this.isConstantRSI()) {
+        val = this.getRescaleSlopeAndIntercept().apply(val);
+      } else {
+        const values = [i, j, k];
+        if (typeof f !== 'undefined') {
+          values.push(f);
+        }
+        const index = new Index(values);
+        val = this.getRescaleSlopeAndIntercept(index).apply(val);
+      }
+    }
+    return val;
+  }
+
+  /**
+   * Get the rescaled value of the image at a specific index.
+   *
+   * @param {Index} index The index.
+   * @returns {number} The rescaled value at the desired position.
+   * Warning: No size check...
+   */
+  getRescaledValueAtIndex(index) {
+    return this.getRescaledValueAtOffset(
+      this.getGeometry().getSize().indexToOffset(index)
+    );
+  }
+
+  /**
+   * Get the rescaled value of the image at a specific offset.
+   *
+   * @param {number} offset The desired offset.
+   * @returns {number} The rescaled value at the desired offset.
+   * Warning: No size check...
+   */
+  getRescaledValueAtOffset(offset) {
+    let val = this.getValueAtOffset(offset);
+    if (!this.isIdentityRSI()) {
+      if (this.isConstantRSI()) {
+        val = this.getRescaleSlopeAndIntercept().apply(val);
+      } else {
+        const index = this.getGeometry().getSize().offsetToIndex(offset);
+        val = this.getRescaleSlopeAndIntercept(index).apply(val);
+      }
+    }
+    return val;
+  }
+
+  /**
+   * Get the rescaled values of all volumes (fourth dimension) at
+   *   a position.
+   *
+   * @param {Point} position The world position, only its first
+   *   three dimensions are used.
+   * @returns {VolumeValue[]} The values with their unit and volume id,
+   *   ordered by volume index, empty if the position is out of bounds
+   *   or if the image cannot be quantified (more than one component).
+   */
+  getRescaledValuesAtPosition(position) {
+    const result = [];
+    if (!this.canQuantify()) {
+      return result;
+    }
+    const geometry = this.getGeometry();
+    const size = geometry.getSize();
+    const unit = this.getMeta().pixelUnit;
+    // spatial index, with a volume index if the image has volumes
+    const values = geometry.worldToIndex(position).getValues().slice(0, 3);
+    const hasVolumes = size.length() > 3;
+    if (hasVolumes) {
+      values.push(0);
+    }
+    if (!geometry.isIndexInBounds(new Index(values))) {
+      return result;
+    }
+    const nVolumes = hasVolumes ? size.get(3) : 1;
+    // use the volume ids only if there is one per volume
+    // (not the case while loading for example)
+    let volumeIds = geometry.getVolumeIds();
+    if (volumeIds?.length !== nVolumes) {
+      volumeIds = undefined;
+    }
+    for (let v = 0; v < nVolumes; ++v) {
+      if (hasVolumes) {
+        values[3] = v;
+      }
+      const volumeId = typeof volumeIds !== 'undefined'
+        ? {...volumeIds[v]} : {id: {value: v}};
+      result.push({
+        volumeId,
+        pixValue: {
+          value: this.getRescaledValueAtIndex(new Index(values)),
+          unit
+        }
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Calculate the data range of the image.
+   * WARNING: for speed reasons, only calculated on the first frame...
+   *
+   * @returns {object} The range {min, max}.
+   */
+  calculateDataRange() {
+    let min = this.getValueAtOffset(0);
+    let max = min;
+    let value;
+    const size = this.getGeometry().getSize();
+    let leni = size.getTotalSize();
+    // max to 3D
+    if (size.length() >= 3) {
+      leni = size.getDimSize(3);
+    }
+    for (let i = 0; i < leni; ++i) {
+      value = this.getValueAtOffset(i);
       if (value > max) {
         max = value;
       }
@@ -539,299 +1333,370 @@ dwv.image.Image.prototype.calculateDataRange = function () {
         min = value;
       }
     }
+    // return
+    return {min, max};
   }
-  // return
-  return {min: min, max: max};
-};
 
-/**
- * Calculate the rescaled data range of the image.
- * WARNING: for speed reasons, only calculated on the first frame...
- *
- * @returns {object} The range {min, max}.
- */
-dwv.image.Image.prototype.calculateRescaledDataRange = function () {
-  if (this.isIdentityRSI()) {
-    return this.getDataRange();
-  } else if (this.isConstantRSI()) {
-    var range = this.getDataRange();
-    var resmin = this.getRescaleSlopeAndIntercept(0).apply(range.min);
-    var resmax = this.getRescaleSlopeAndIntercept(0).apply(range.max);
-    return {
-      min: ((resmin < resmax) ? resmin : resmax),
-      max: ((resmin > resmax) ? resmin : resmax)
-    };
-  } else {
-    var size = this.getGeometry().getSize();
-    var nFrames = 1; //this.getNumberOfFrames();
-    var rmin = this.getRescaledValue(0, 0, 0);
-    var rmax = rmin;
-    var rvalue = 0;
-    for (var f = 0, nframes = nFrames; f < nframes; ++f) {
-      for (var k = 0, nslices = size.getNumberOfSlices(); k < nslices; ++k) {
-        for (var j = 0, nrows = size.getNumberOfRows(); j < nrows; ++j) {
-          for (var i = 0, ncols = size.getNumberOfColumns(); i < ncols; ++i) {
-            rvalue = this.getRescaledValue(i, j, k, f);
-            if (rvalue > rmax) {
-              rmax = rvalue;
-            }
-            if (rvalue < rmin) {
-              rmin = rvalue;
-            }
-          }
-        }
+  /**
+   * Calculate the rescaled data range of the image.
+   * WARNING: for speed reasons, only calculated on the first frame...
+   *
+   * @returns {object} The range {min, max}.
+   */
+  calculateRescaledDataRange() {
+    if (this.isIdentityRSI()) {
+      return this.getDataRange();
+    } else if (this.isConstantRSI()) {
+      const range = this.getDataRange();
+      const resmin = this.getRescaleSlopeAndIntercept().apply(range.min);
+      const resmax = this.getRescaleSlopeAndIntercept().apply(range.max);
+      return {
+        min: ((resmin < resmax) ? resmin : resmax),
+        max: ((resmin > resmax) ? resmin : resmax)
+      };
+    }
+
+    let rmin = this.getRescaledValueAtOffset(0);
+    let rmax = rmin;
+    let rvalue;
+    const size = this.getGeometry().getSize();
+    let leni = size.getTotalSize();
+    // max to 3D
+    if (size.length() >= 3) {
+      leni = size.getDimSize(3);
+    }
+    for (let i = 0; i < leni; ++i) {
+      rvalue = this.getRescaledValueAtOffset(i);
+      if (rvalue > rmax) {
+        rmax = rvalue;
+      }
+      if (rvalue < rmin) {
+        rmin = rvalue;
       }
     }
     // return
     return {min: rmin, max: rmax};
   }
-};
 
-/**
- * Calculate the histogram of the image.
- *
- * @returns {object} The histogram, data range and rescaled data range.
- */
-dwv.image.Image.prototype.calculateHistogram = function () {
-  var size = this.getGeometry().getSize();
-  var histo = [];
-  var min = this.getValue(0, 0, 0);
-  var max = min;
-  var value = 0;
-  var rmin = this.getRescaledValue(0, 0, 0);
-  var rmax = rmin;
-  var rvalue = 0;
-  for (var f = 0, nframes = this.getNumberOfFrames(); f < nframes; ++f) {
-    for (var k = 0, nslices = size.getNumberOfSlices(); k < nslices; ++k) {
-      for (var j = 0, nrows = size.getNumberOfRows(); j < nrows; ++j) {
-        for (var i = 0, ncols = size.getNumberOfColumns(); i < ncols; ++i) {
-          value = this.getValue(i, j, k, f);
-          if (value > max) {
-            max = value;
-          }
-          if (value < min) {
-            min = value;
-          }
-          rvalue = this.getRescaleSlopeAndIntercept(k).apply(value);
-          if (rvalue > rmax) {
-            rmax = rvalue;
-          }
-          if (rvalue < rmin) {
-            rmin = rvalue;
-          }
-          histo[rvalue] = (histo[rvalue] || 0) + 1;
-        }
+  /**
+   * Calculate the histogram of the image.
+   *
+   * @returns {ImageHistogram} The histogram.
+   */
+  #calculateHistogram() {
+    const size = this.getGeometry().getSize();
+    const sliceSize = size.getDimSize(2);
+    const histogram = new ImageHistogram(this.getMeta().pixelUnit);
+    for (let start = 0, leni = size.getTotalSize();
+      start < leni; start += sliceSize) {
+      // rsi of this slice (index ignored for constant rsi)
+      const sliceHistogram = histogram.getHistogram(
+        this.getRescaleSlopeAndIntercept(size.offsetToIndex(start)));
+      for (let i = start; i < start + sliceSize; ++i) {
+        sliceHistogram.add(this.getValueAtOffset(i));
       }
     }
-  }
-  // set data range
-  var dataRange = {min: min, max: max};
-  var rescaledDataRange = {min: rmin, max: rmax};
-  // generate data for plotting
-  var histogram = [];
-  for (var b = rmin; b <= rmax; ++b) {
-    histogram.push([b, (histo[b] || 0)]);
-  }
-  // return
-  return {
-    dataRange: dataRange,
-    rescaledDataRange: rescaledDataRange,
-    histogram: histogram
-  };
-};
-
-/**
- * Convolute the image with a given 2D kernel.
- *
- * @param {Array} weights The weights of the 2D kernel as a 3x3 matrix.
- * @returns {Image} The convoluted image.
- * Note: Uses the raw buffer values.
- */
-dwv.image.Image.prototype.convolute2D = function (weights) {
-  if (weights.length !== 9) {
-    throw new Error(
-      'The convolution matrix does not have a length of 9; it has ' +
-      weights.length);
+    return histogram;
   }
 
-  var newImage = this.clone();
-  var newBuffer = newImage.getBuffer();
-
-  var imgSize = this.getGeometry().getSize();
-  var ncols = imgSize.getNumberOfColumns();
-  var nrows = imgSize.getNumberOfRows();
-  var nslices = imgSize.getNumberOfSlices();
-  var nframes = this.getNumberOfFrames();
-  var ncomp = this.getNumberOfComponents();
-
-  // adapt to number of component and planar configuration
-  var factor = 1;
-  var componentOffset = 1;
-  var frameOffset = imgSize.getTotalSize();
-  if (ncomp === 3) {
-    frameOffset *= 3;
-    if (this.getPlanarConfiguration() === 0) {
-      factor = 3;
-    } else {
-      componentOffset = imgSize.getTotalSize();
+  /**
+   * Convolute the image with a given 2D kernel.
+   *
+   * Note: Uses raw buffer values.
+   *
+   * @param {number[]} weights The weights of the 2D kernel as a 3x3 matrix.
+   * @returns {Image} The convoluted image.
+   */
+  convolute2D(weights) {
+    if (weights.length !== 9) {
+      throw new Error(
+        `The convolution matrix does not have a length of 9; it has ${
+          weights.length }`);
     }
+
+    const newImage = this.clone();
+    const newBuffer = newImage.getBuffer();
+
+    const imgSize = this.getGeometry().getSize();
+    const dimOffset = imgSize.getDimSize(2) * this.getNumberOfComponents();
+    for (let k = 0; k < imgSize.get(2); ++k) {
+      this.convoluteBuffer(weights, newBuffer, k * dimOffset);
+    }
+
+    return newImage;
   }
 
-  // allow special indent for matrices
-  /*jshint indent:false */
+  /**
+   * Convolute an image buffer with a given 2D kernel.
+   *
+   * Note: Uses raw buffer values.
+   *
+   * @param {number[]} weights The weights of the 2D kernel as a 3x3 matrix.
+   * @param {TypedArray} buffer The buffer to convolute.
+   * @param {number} startOffset The index to start at.
+   */
+  convoluteBuffer(
+    weights, buffer, startOffset) {
+    const imgSize = this.getGeometry().getSize();
+    const ncols = imgSize.get(0);
+    const nrows = imgSize.get(1);
+    const ncomp = this.getNumberOfComponents();
 
-  // default weight offset matrix
-  var wOff = [];
-  wOff[0] = (-ncols - 1) * factor;
-  wOff[1] = (-ncols) * factor;
-  wOff[2] = (-ncols + 1) * factor;
-  wOff[3] = -factor;
-  wOff[4] = 0;
-  wOff[5] = 1 * factor;
-  wOff[6] = (ncols - 1) * factor;
-  wOff[7] = (ncols) * factor;
-  wOff[8] = (ncols + 1) * factor;
+    // number of component and planar configuration vars
+    let factor = 1;
+    let componentOffset = 1;
+    if (ncomp === 3) {
+      if (this.getPlanarConfiguration() === 0) {
+        factor = 3;
+      } else {
+        componentOffset = imgSize.getDimSize(2);
+      }
+    }
 
-  // border weight offset matrices
-  // borders are extended (see http://en.wikipedia.org/wiki/Kernel_%28image_processing%29)
+    // default weight offset matrix
+    const wOff = [];
+    wOff[0] = (-ncols - 1) * factor;
+    wOff[1] = (-ncols) * factor;
+    wOff[2] = (-ncols + 1) * factor;
+    wOff[3] = -factor;
+    wOff[4] = 0;
+    wOff[5] = factor;
+    wOff[6] = (ncols - 1) * factor;
+    wOff[7] = (ncols) * factor;
+    wOff[8] = (ncols + 1) * factor;
 
-  // i=0, j=0
-  var wOff00 = [];
-  wOff00[0] = wOff[4]; wOff00[1] = wOff[4]; wOff00[2] = wOff[5];
-  wOff00[3] = wOff[4]; wOff00[4] = wOff[4]; wOff00[5] = wOff[5];
-  wOff00[6] = wOff[7]; wOff00[7] = wOff[7]; wOff00[8] = wOff[8];
-  // i=0, j=*
-  var wOff0x = [];
-  wOff0x[0] = wOff[1]; wOff0x[1] = wOff[1]; wOff0x[2] = wOff[2];
-  wOff0x[3] = wOff[4]; wOff0x[4] = wOff[4]; wOff0x[5] = wOff[5];
-  wOff0x[6] = wOff[7]; wOff0x[7] = wOff[7]; wOff0x[8] = wOff[8];
-  // i=0, j=nrows
-  var wOff0n = [];
-  wOff0n[0] = wOff[1]; wOff0n[1] = wOff[1]; wOff0n[2] = wOff[2];
-  wOff0n[3] = wOff[4]; wOff0n[4] = wOff[4]; wOff0n[5] = wOff[5];
-  wOff0n[6] = wOff[4]; wOff0n[7] = wOff[4]; wOff0n[8] = wOff[5];
+    // border weight offset matrices
+    // borders are extended (see http://en.wikipedia.org/wiki/Kernel_%28image_processing%29)
 
-  // i=*, j=0
-  var wOffx0 = [];
-  wOffx0[0] = wOff[3]; wOffx0[1] = wOff[4]; wOffx0[2] = wOff[5];
-  wOffx0[3] = wOff[3]; wOffx0[4] = wOff[4]; wOffx0[5] = wOff[5];
-  wOffx0[6] = wOff[6]; wOffx0[7] = wOff[7]; wOffx0[8] = wOff[8];
-  // i=*, j=* -> wOff
-  // i=*, j=nrows
-  var wOffxn = [];
-  wOffxn[0] = wOff[0]; wOffxn[1] = wOff[1]; wOffxn[2] = wOff[2];
-  wOffxn[3] = wOff[3]; wOffxn[4] = wOff[4]; wOffxn[5] = wOff[5];
-  wOffxn[6] = wOff[3]; wOffxn[7] = wOff[4]; wOffxn[8] = wOff[5];
+    /* eslint-disable @stylistic/js/max-statements-per-line */
 
-  // i=ncols, j=0
-  var wOffn0 = [];
-  wOffn0[0] = wOff[3]; wOffn0[1] = wOff[4]; wOffn0[2] = wOff[4];
-  wOffn0[3] = wOff[3]; wOffn0[4] = wOff[4]; wOffn0[5] = wOff[4];
-  wOffn0[6] = wOff[6]; wOffn0[7] = wOff[7]; wOffn0[8] = wOff[7];
-  // i=ncols, j=*
-  var wOffnx = [];
-  wOffnx[0] = wOff[0]; wOffnx[1] = wOff[1]; wOffnx[2] = wOff[1];
-  wOffnx[3] = wOff[3]; wOffnx[4] = wOff[4]; wOffnx[5] = wOff[4];
-  wOffnx[6] = wOff[6]; wOffnx[7] = wOff[7]; wOffnx[8] = wOff[7];
-  // i=ncols, j=nrows
-  var wOffnn = [];
-  wOffnn[0] = wOff[0]; wOffnn[1] = wOff[1]; wOffnn[2] = wOff[1];
-  wOffnn[3] = wOff[3]; wOffnn[4] = wOff[4]; wOffnn[5] = wOff[4];
-  wOffnn[6] = wOff[3]; wOffnn[7] = wOff[4]; wOffnn[8] = wOff[4];
+    // i=0, j=0
+    const wOff00 = [];
+    wOff00[0] = wOff[4]; wOff00[1] = wOff[4]; wOff00[2] = wOff[5];
+    wOff00[3] = wOff[4]; wOff00[4] = wOff[4]; wOff00[5] = wOff[5];
+    wOff00[6] = wOff[7]; wOff00[7] = wOff[7]; wOff00[8] = wOff[8];
+    // i=0, j=*
+    const wOff0x = [];
+    wOff0x[0] = wOff[1]; wOff0x[1] = wOff[1]; wOff0x[2] = wOff[2];
+    wOff0x[3] = wOff[4]; wOff0x[4] = wOff[4]; wOff0x[5] = wOff[5];
+    wOff0x[6] = wOff[7]; wOff0x[7] = wOff[7]; wOff0x[8] = wOff[8];
+    // i=0, j=nrows
+    const wOff0n = [];
+    wOff0n[0] = wOff[1]; wOff0n[1] = wOff[1]; wOff0n[2] = wOff[2];
+    wOff0n[3] = wOff[4]; wOff0n[4] = wOff[4]; wOff0n[5] = wOff[5];
+    wOff0n[6] = wOff[4]; wOff0n[7] = wOff[4]; wOff0n[8] = wOff[5];
 
-  // restore indent for rest of method
-  /*jshint indent:4 */
+    // i=*, j=0
+    const wOffx0 = [];
+    wOffx0[0] = wOff[3]; wOffx0[1] = wOff[4]; wOffx0[2] = wOff[5];
+    wOffx0[3] = wOff[3]; wOffx0[4] = wOff[4]; wOffx0[5] = wOff[5];
+    wOffx0[6] = wOff[6]; wOffx0[7] = wOff[7]; wOffx0[8] = wOff[8];
+    // i=*, j=* -> wOff
+    // i=*, j=nrows
+    const wOffxn = [];
+    wOffxn[0] = wOff[0]; wOffxn[1] = wOff[1]; wOffxn[2] = wOff[2];
+    wOffxn[3] = wOff[3]; wOffxn[4] = wOff[4]; wOffxn[5] = wOff[5];
+    wOffxn[6] = wOff[3]; wOffxn[7] = wOff[4]; wOffxn[8] = wOff[5];
 
-  // loop vars
-  var pixelOffset = 0;
-  var newValue = 0;
-  var wOffFinal = [];
-  // go through the destination image pixels
-  for (var f = 0; f < nframes; f++) {
-    pixelOffset = f * frameOffset;
-    for (var c = 0; c < ncomp; c++) {
-      // special component offset
+    // i=ncols, j=0
+    const wOffn0 = [];
+    wOffn0[0] = wOff[3]; wOffn0[1] = wOff[4]; wOffn0[2] = wOff[4];
+    wOffn0[3] = wOff[3]; wOffn0[4] = wOff[4]; wOffn0[5] = wOff[4];
+    wOffn0[6] = wOff[6]; wOffn0[7] = wOff[7]; wOffn0[8] = wOff[7];
+    // i=ncols, j=*
+    const wOffnx = [];
+    wOffnx[0] = wOff[0]; wOffnx[1] = wOff[1]; wOffnx[2] = wOff[1];
+    wOffnx[3] = wOff[3]; wOffnx[4] = wOff[4]; wOffnx[5] = wOff[4];
+    wOffnx[6] = wOff[6]; wOffnx[7] = wOff[7]; wOffnx[8] = wOff[7];
+    // i=ncols, j=nrows
+    const wOffnn = [];
+    wOffnn[0] = wOff[0]; wOffnn[1] = wOff[1]; wOffnn[2] = wOff[1];
+    wOffnn[3] = wOff[3]; wOffnn[4] = wOff[4]; wOffnn[5] = wOff[4];
+    wOffnn[6] = wOff[3]; wOffnn[7] = wOff[4]; wOffnn[8] = wOff[4];
+
+    /* eslint-enable @stylistic/js/max-statements-per-line */
+
+    // loop vars
+    let pixelOffset = startOffset;
+    let newValue;
+    let wOffFinal;
+    for (let c = 0; c < ncomp; ++c) {
+      // component offset
       pixelOffset += c * componentOffset;
-      for (var k = 0; k < nslices; k++) {
-        for (var j = 0; j < nrows; j++) {
-          for (var i = 0; i < ncols; i++) {
-            wOffFinal = wOff;
-            // special border cases
-            if (i === 0 && j === 0) {
-              wOffFinal = wOff00;
-            } else if (i === 0 && j === (nrows - 1)) {
-              wOffFinal = wOff0n;
-            } else if (i === (ncols - 1) && j === 0) {
-              wOffFinal = wOffn0;
-            } else if (i === (ncols - 1) && j === (nrows - 1)) {
-              wOffFinal = wOffnn;
-            } else if (i === 0 && j !== (nrows - 1) && j !== 0) {
-              wOffFinal = wOff0x;
-            } else if (i === (ncols - 1) && j !== (nrows - 1) && j !== 0) {
-              wOffFinal = wOffnx;
-            } else if (i !== 0 && i !== (ncols - 1) && j === 0) {
-              wOffFinal = wOffx0;
-            } else if (i !== 0 && i !== (ncols - 1) && j === (nrows - 1)) {
-              wOffFinal = wOffxn;
-            }
-
-            // calculate the weighed sum of the source image pixels that
-            // fall under the convolution matrix
-            newValue = 0;
-            for (var wi = 0; wi < 9; ++wi) {
-              newValue += this.getValueAtOffset(
-                pixelOffset + wOffFinal[wi], f) * weights[wi];
-            }
-            newBuffer[f][pixelOffset] = newValue;
-            // increment pixel offset
-            pixelOffset += factor;
+      for (let j = 0; j < nrows; ++j) {
+        for (let i = 0; i < ncols; ++i) {
+          wOffFinal = wOff;
+          // special border cases
+          if (i === 0 && j === 0) {
+            wOffFinal = wOff00;
+          } else if (i === 0 && j === (nrows - 1)) {
+            wOffFinal = wOff0n;
+          } else if (i === (ncols - 1) && j === 0) {
+            wOffFinal = wOffn0;
+          } else if (i === (ncols - 1) && j === (nrows - 1)) {
+            wOffFinal = wOffnn;
+          } else if (i === 0 && j !== (nrows - 1) && j !== 0) {
+            wOffFinal = wOff0x;
+          } else if (i === (ncols - 1) && j !== (nrows - 1) && j !== 0) {
+            wOffFinal = wOffnx;
+          } else if (i !== 0 && i !== (ncols - 1) && j === 0) {
+            wOffFinal = wOffx0;
+          } else if (i !== 0 && i !== (ncols - 1) && j === (nrows - 1)) {
+            wOffFinal = wOffxn;
           }
+          // calculate the weighed sum of the source image pixels that
+          // fall under the convolution matrix
+          newValue = 0;
+          for (let wi = 0; wi < 9; ++wi) {
+            newValue += this.getValueAtOffset(
+              pixelOffset + wOffFinal[wi]) * weights[wi];
+          }
+          buffer[pixelOffset] = newValue;
+          // increment pixel offset
+          pixelOffset += factor;
         }
       }
     }
   }
-  return newImage;
-};
 
-/**
- * Transform an image using a specific operator.
- * WARNING: no size check!
- *
- * @param {Function} operator The operator to use when transforming.
- * @returns {Image} The transformed image.
- * Note: Uses the raw buffer values.
- */
-dwv.image.Image.prototype.transform = function (operator) {
-  var newImage = this.clone();
-  var newBuffer = newImage.getBuffer();
-  for (var f = 0, lenf = this.getNumberOfFrames(); f < lenf; ++f) {
-    for (var i = 0, leni = newBuffer[f].length; i < leni; ++i) {
-      newBuffer[f][i] = operator(newImage.getValueAtOffset(i, f));
+  /**
+   * Transform an image using a specific operator.
+   * WARNING: no size check!
+   *
+   * @param {Function} operator The operator to use when transforming.
+   * @returns {Image} The transformed image.
+   * Note: Uses the raw buffer values.
+   */
+  transform(operator) {
+    const newImage = this.clone();
+    const newBuffer = newImage.getBuffer();
+    for (let i = 0, leni = newBuffer.length; i < leni; ++i) {
+      newBuffer[i] = operator(newImage.getValueAtOffset(i));
     }
+    return newImage;
   }
-  return newImage;
-};
 
-/**
- * Compose this image with another one and using a specific operator.
- * WARNING: no size check!
- *
- * @param {Image} rhs The image to compose with.
- * @param {Function} operator The operator to use when composing.
- * @returns {Image} The composed image.
- * Note: Uses the raw buffer values.
- */
-dwv.image.Image.prototype.compose = function (rhs, operator) {
-  var newImage = this.clone();
-  var newBuffer = newImage.getBuffer();
-  for (var f = 0, lenf = this.getNumberOfFrames(); f < lenf; ++f) {
-    for (var i = 0, leni = newBuffer[f].length; i < leni; ++i) {
+  /**
+   * Compose this image with another one and using a specific operator.
+   * WARNING: no size check!
+   *
+   * @param {Image} rhs The image to compose with.
+   * @param {Function} operator The operator to use when composing.
+   * @returns {Image} The composed image.
+   * Note: Uses the raw buffer values.
+   */
+  compose(rhs, operator) {
+    const newImage = this.clone();
+    const newBuffer = newImage.getBuffer();
+    for (let i = 0, leni = newBuffer.length; i < leni; ++i) {
       // using the operator on the local buffer, i.e. the
       // latest (not original) data
-      newBuffer[f][i] = Math.floor(
-        operator(this.getValueAtOffset(i, f), rhs.getValueAtOffset(i, f))
+      newBuffer[i] = Math.floor(
+        operator(this.getValueAtOffset(i), rhs.getValueAtOffset(i))
       );
     }
+    return newImage;
   }
-  return newImage;
-};
+
+  /**
+   * Return if this image has been resampled.
+   *
+   * @returns {boolean} If the image has been resampled.
+   */
+  isResampled() {
+    return this.#resampled;
+  }
+
+  /**
+   * Resample this image to a new orientation.
+   *
+   * @param {Matrix33} orientation The orientation to resample to.
+   * @param {boolean|undefined} interpolated Default true, if true use bilinear
+   *  sampling, otherwise use nearest neighbor.
+   * @param {Point|undefined} centerOfRotation World space center of rotation.
+   */
+  resample(
+    orientation,
+    interpolated = undefined,
+    centerOfRotation = undefined
+  ) {
+    if (this.#resamplingThread === null) {
+      this.#resamplingThread = new ResamplingThread();
+
+      this.#resamplingThread.ondoneframe = (event) => {
+        const data = event.data;
+
+        // In case multiple resampled jobs are running at the same time,
+        // we only care about the most recent one.
+        if (this.#resamplingJobId === data.jobId) {
+          this.#buffer.set(data.targetImageBuffer, data.startOffset);
+          this.dispatchEvent(new CustomEvent('imageresampled',
+            {detail: {frame: data.frame}}));
+        }
+      };
+
+      this.#resamplingThread.ondone = (_) => {
+        this.dispatchEvent(new CustomEvent('imageresamplingcomplete'));
+      };
+    }
+
+    // If we were already resampled then resample again from the
+    // original to not degrade the data
+
+    const source = this.#resampled && this.#rawBuffer && this.#rawGeometry
+      ? {buffer: this.#rawBuffer, geometry: this.#rawGeometry}
+      : {buffer: this.#buffer, geometry: this.#geometry};
+
+    this.dispatchEvent(new CustomEvent('imageresamplingstart'));
+
+    const resampled = this.#resamplingThread.run(
+      source.buffer,
+      source.geometry,
+      this.#meta.PixelRepresentation,
+      orientation,
+      typeof interpolated === 'undefined' || interpolated,
+      centerOfRotation
+    );
+
+    // if the image is already resampled we don't want to override the raw
+    if (!this.#resampled) {
+      this.#resampled = true;
+      this.#rawBuffer = this.#buffer;
+      this.#rawGeometry = this.#geometry;
+    }
+
+    this.#buffer = resampled.buffer;
+    this.#geometry = resampled.geometry;
+    // keep volume ids
+    const volumeIds = source.geometry.getVolumeIds();
+    if (typeof volumeIds !== 'undefined') {
+      this.#geometry.setVolumeIds(volumeIds);
+    }
+    this.#resamplingJobId = resampled.jobId;
+
+    this.dispatchEvent(new CustomEvent('imagecontentchange'));
+    this.dispatchEvent(new CustomEvent('imagegeometrychange'));
+  }
+
+  /**
+   * Revert a resampled image to its original state.
+   */
+  revert() {
+    if (!this.#resampled) {
+      return;
+    }
+
+    this.dispatchEvent(new CustomEvent('imageresamplingstart'));
+
+    this.#resampled = false;
+    this.#buffer = this.#rawBuffer;
+    this.#geometry = this.#rawGeometry;
+    this.#rawBuffer = null;
+    this.#rawGeometry = null;
+
+    this.dispatchEvent(new CustomEvent('imagecontentchange'));
+    this.dispatchEvent(new CustomEvent('imagegeometrychange'));
+    this.dispatchEvent(new CustomEvent('imageresampled'));
+  }
+
+} // class Image

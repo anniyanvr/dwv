@@ -1,6 +1,12 @@
-// namespaces
-var dwv = dwv || {};
-dwv.math = dwv.math || {};
+import {getStats} from './stats.js';
+import {Index} from './index.js';
+
+/**
+ * @import {Point2D} from '../math/point.js';
+ * @import {NumberValue} from './types.js';
+ * @import {ViewController} from '../app/viewController.js';
+ * @import {Scalar2D} from './scalar.js';
+ */
 
 /**
  * Mulitply the three inputs if the last two are not null.
@@ -11,162 +17,313 @@ dwv.math = dwv.math || {};
  * @returns {number} The multiplication of the three inputs or
  *  null if one of the last two is null.
  */
-dwv.math.mulABC = function (a, b, c) {
-  var res = null;
+function mulABC(a, b, c) {
+  let res = null;
   if (b !== null && c !== null) {
     res = a * b * c;
   }
   return res;
-};
+}
 
 /**
  * Ellipse shape.
- *
- * @class
- * @param {object} centre A Point2D representing the centre of the ellipse.
- * @param {number} a The radius of the ellipse on the horizontal axe.
- * @param {number} b The radius of the ellipse on the vertical axe.
  */
-dwv.math.Ellipse = function (centre, a, b) {
+export class Ellipse {
+
+  /**
+   * Ellipse centre.
+   *
+   * @type {Point2D}
+   */
+  #centre;
+
+  /**
+   * Ellipse horizontal radius.
+   *
+   * @type {number}
+   */
+  #a;
+
+  /**
+   * Ellipse vertical radius.
+   *
+   * @type {number}
+   */
+  #b;
+
+  /**
+   * @param {Point2D} centre A Point2D representing the centre
+   *   of the ellipse.
+   * @param {number} a The radius of the ellipse on the horizontal axe.
+   * @param {number} b The radius of the ellipse on the vertical axe.
+   */
+  constructor(centre, a, b) {
+    this.#centre = centre;
+    this.#a = a;
+    this.#b = b;
+  }
+
   /**
    * Get the centre (point) of the ellipse.
    *
-   * @returns {object} The center (point) of the ellipse.
+   * @returns {Point2D} The center (point) of the ellipse.
    */
-  this.getCenter = function () {
-    return centre;
-  };
+  getCenter() {
+    return this.#centre;
+  }
+
+  /**
+   * Get the centroid of the ellipse.
+   *
+   * @returns {Point2D} The centroid point.
+   */
+  getCentroid() {
+    return this.#centre;
+  }
 
   /**
    * Get the radius of the ellipse on the horizontal axe.
    *
    * @returns {number} The radius of the ellipse on the horizontal axe.
    */
-  this.getA = function () {
-    return a;
-  };
+  getA() {
+    return this.#a;
+  }
 
   /**
    * Get the radius of the ellipse on the vertical axe.
    *
    * @returns {number} The radius of the ellipse on the vertical axe.
    */
-  this.getB = function () {
-    return b;
-  };
-}; // Ellipse class
-
-/**
- * Check for equality.
- *
- * @param {object} rhs The object to compare to.
- * @returns {boolean} True if both objects are equal.
- */
-dwv.math.Ellipse.prototype.equals = function (rhs) {
-  return rhs !== null &&
-    this.getCenter().equals(rhs.getCenter()) &&
-    this.getA() === rhs.getA() &&
-    this.getB() === rhs.getB();
-};
-
-/**
- * Get the surface of the ellipse.
- *
- * @returns {number} The surface of the ellipse.
- */
-dwv.math.Ellipse.prototype.getSurface = function () {
-  return Math.PI * this.getA() * this.getB();
-};
-
-/**
- * Get the surface of the ellipse according to a spacing.
- *
- * @param {number} spacingX The X spacing.
- * @param {number} spacingY The Y spacing.
- * @returns {number} The surface of the ellipse multiplied by the given
- *  spacing or null for null spacings.
- */
-dwv.math.Ellipse.prototype.getWorldSurface = function (spacingX, spacingY) {
-  return dwv.math.mulABC(this.getSurface(), spacingX, spacingY);
-};
-
-/**
- * Get the rounded limits of the ellipse.
- * (see https://en.wikipedia.org/wiki/Ellipse#Standard_equation)
- * Ellipse formula: x*x / a*a + y*y / b*b = 1
- * => y = (+-)(b/a) * sqrt(a*a - x*x)
- *
- * @returns {Array} The rounded limits.
- */
-dwv.math.Ellipse.prototype.getRound = function () {
-  var centerX = this.getCenter().getX();
-  var centerY = this.getCenter().getY();
-  var radiusX = this.getA();
-  var radiusY = this.getB();
-  var radiusRatio = radiusX / radiusY;
-  var rySquare = Math.pow(radiusY, 2);
-  // Y bounds
-  var minY = centerY - radiusY;
-  var maxY = centerY + radiusY;
-  var regions = [];
-  // loop through lines and store limits
-  for (var y = minY; y < maxY; ++y) {
-    var diff = rySquare - Math.pow(y - centerY, 2);
-    // remove small values (possibly negative)
-    if (Math.abs(diff) < 1e-7) {
-      continue;
-    }
-    var transX = radiusRatio * Math.sqrt(diff);
-    // remove small values
-    if (transX < 0.5) {
-      continue;
-    }
-    regions.push([
-      [Math.round(centerX - transX), Math.round(y)],
-      [Math.round(centerX + transX), Math.round(y)]
-    ]);
-  }
-  return regions;
-};
-
-/**
- * Quantify an ellipse according to view information.
- *
- * @param {object} viewController The associated view controller.
- * @param {Array} flags A list of stat values to calculate.
- * @returns {object} A quantification object.
- */
-dwv.math.Ellipse.prototype.quantify = function (viewController, flags) {
-  var quant = {};
-  // surface
-  var spacing = viewController.get2DSpacing();
-  var surface = this.getWorldSurface(spacing[0], spacing[1]);
-  if (surface !== null) {
-    quant.surface = {value: surface / 100, unit: dwv.i18n('unit.cm2')};
+  getB() {
+    return this.#b;
   }
 
-  // pixel quantification
-  if (viewController.canQuantifyImage()) {
-    var regions = this.getRound();
-    if (regions.length !== 0) {
-      var values = viewController.getImageVariableRegionValues(regions);
-      var quantif = dwv.math.getStats(values, flags);
-      quant.min = {value: quantif.getMin(), unit: ''};
-      quant.max = {value: quantif.getMax(), unit: ''};
-      quant.mean = {value: quantif.getMean(), unit: ''};
-      quant.stdDev = {value: quantif.getStdDev(), unit: ''};
-      if (typeof quantif.getMedian !== 'undefined') {
-        quant.median = {value: quantif.getMedian(), unit: ''};
+  /**
+   * Check if a point is inside the ellipse, the ellipse radii being
+   *   extended by a tolerance.
+   *
+   * @param {Point2D} point The point to check.
+   * @param {number} [tolerance] Optional radius extension, defaults to 0.
+   * @returns {boolean} True if the point is in the ellipse.
+   */
+  contains(point, tolerance = 0) {
+    const a = this.#a + tolerance;
+    const b = this.#b + tolerance;
+    if (a <= 0 || b <= 0) {
+      return false;
+    }
+    const dx = (point.getX() - this.#centre.getX()) / a;
+    const dy = (point.getY() - this.#centre.getY()) / b;
+    return dx * dx + dy * dy <= 1;
+  }
+
+  /**
+   * Check for equality.
+   *
+   * @param {Ellipse} rhs The object to compare to.
+   * @returns {boolean} True if both objects are equal.
+   */
+  equals(rhs) {
+    return rhs !== null &&
+      this.getCenter().equals(rhs.getCenter()) &&
+      this.getA() === rhs.getA() &&
+      this.getB() === rhs.getB();
+  }
+
+  /**
+   * Get the surface of the ellipse.
+   *
+   * @returns {number} The surface of the ellipse.
+   */
+  getSurface() {
+    return Math.PI * this.getA() * this.getB();
+  }
+
+  /**
+   * Get the surface of the ellipse according to a spacing.
+   *
+   * @param {Scalar2D} spacing2D The 2D spacing.
+   * @returns {number} The surface of the ellipse multiplied by the given
+   *  spacing or null for null spacings.
+   */
+  getWorldSurface(spacing2D) {
+    return mulABC(this.getSurface(), spacing2D.x, spacing2D.y);
+  }
+
+  /**
+   * Get the rounded limits of the ellipse.
+   *
+   * See: {@link https://en.wikipedia.org/wiki/Ellipse#Standard_equation}.
+   *
+   * Ellipse formula: `x*x / a*a + y*y / b*b = 1`.
+   *
+   * Implies: `y = (+-)(b/a) * sqrt(a*a - x*x)`.
+   *
+   * @returns {number[][][]} The rounded limits:
+   *  list of [x, y] pairs (min, max).
+   */
+  getRound() {
+    const centerX = this.getCenter().getX();
+    const centerY = this.getCenter().getY();
+    const radiusX = this.getA();
+    const radiusY = this.getB();
+    const radiusRatio = radiusX / radiusY;
+    const rySquare = Math.pow(radiusY, 2);
+    // Y bounds
+    const minY = centerY - radiusY;
+    const maxY = centerY + radiusY;
+    const regions = [];
+    // loop through lines and store limits
+    for (let y = minY; y < maxY; ++y) {
+      const diff = rySquare - Math.pow(y - centerY, 2);
+      // remove small values (possibly negative)
+      if (Math.abs(diff) < 1e-7) {
+        continue;
       }
-      if (typeof quantif.getP25 !== 'undefined') {
-        quant.p25 = {value: quantif.getP25(), unit: ''};
+      const transX = radiusRatio * Math.sqrt(diff);
+      // remove small values
+      if (transX < 0.5) {
+        continue;
       }
-      if (typeof quantif.getP75 !== 'undefined') {
-        quant.p75 = {value: quantif.getP75(), unit: ''};
+      regions.push([
+        [Math.round(centerX - transX), Math.round(y)],
+        [Math.round(centerX + transX), Math.round(y)]
+      ]);
+    }
+    return regions;
+  }
+
+  /**
+   * Quantify an ellipse according to view information.
+   *
+   * @param {ViewController} viewController The associated view controller.
+   * @param {Index} index The index at which to get the
+   *   image values.
+   * @param {string[]} flags A list of stat values to calculate.
+   * @returns {Record<string, NumberValue>} A quantification object.
+   */
+  quantify(viewController, index, flags) {
+    // shape quantification
+    const spacing2D = viewController.get2DSpacing();
+    const lengthUnit = viewController.getLengthUnit();
+    const twoALength = 2 * this.getA() * spacing2D.x;
+    const twoBLength = 2 * this.getB() * spacing2D.y;
+    const longAxis = {
+      value: Math.max(twoALength, twoBLength),
+      unit: lengthUnit
+    };
+    const shortAxis = {
+      value: Math.min(twoALength, twoBLength),
+      unit: lengthUnit
+    };
+    const worldSurface = this.getWorldSurface(spacing2D);
+    let surface;
+    if (worldSurface !== null) {
+      if (lengthUnit === 'unit.mm') {
+        surface = {
+          value: worldSurface / 100,
+          unit: 'unit.cm2'
+        };
+      } else {
+        surface = {
+          value: worldSurface,
+          unit: lengthUnit
+        };
+      }
+    }
+
+    // shape quantification
+    const quant = {longAxis, shortAxis, surface};
+
+    // pixel values quantification
+    if (viewController.canQuantifyImage()) {
+      const regions = this.getRound();
+      if (regions.length !== 0) {
+        const values = viewController.getImageVariableRegionValues(
+          regions, index);
+        const unit = viewController.getPixelUnit();
+        const quantif = getStats(values, flags);
+        if (typeof quantif !== 'undefined') {
+          quant.min = {value: quantif.min, unit};
+          quant.max = {value: quantif.max, unit};
+          quant.mean = {value: quantif.mean, unit};
+          quant.stdDev = {value: quantif.stdDev, unit};
+          if (typeof quantif.median !== 'undefined') {
+            quant.median = {value: quantif.median, unit};
+          }
+          if (typeof quantif.p25 !== 'undefined') {
+            quant.p25 = {value: quantif.p25, unit};
+          }
+          if (typeof quantif.p75 !== 'undefined') {
+            quant.p75 = {value: quantif.p75, unit};
+          }
+        }
+      }
+    }
+
+    // return
+    return quant;
+  }
+
+} // Ellipse class
+
+/**
+ * Get the indices that form a ellpise.
+ *
+ * @param {Index} center The ellipse center.
+ * @param {number[]} radius The 2 ellipse radiuses.
+ * @param {number[]} dir The 2 ellipse directions.
+ * @returns {Index[]} The indices of the ellipse.
+ */
+export function getEllipseIndices(center, radius, dir) {
+  const centerValues = center.getValues();
+  // keep all values for possible extra dimensions
+  const values = centerValues.slice();
+  const indices = [];
+  const radiusI = radius[0];
+  const radiusJ = radius[1];
+  const radiusRatio = radiusI / radiusJ;
+  const radiusJ2 = Math.pow(radiusJ, 2);
+  const di = dir[0];
+  const dj = dir[1];
+  // deduce 4 positions from top right
+  for (let j = 0; j < radiusJ; ++j) {
+    // right triangle formed by radiuses, j and len
+    // ellipse: i*i / a*a + j*j / b*b = 1
+    // -> i = a/b * sqrt(b*b - j*j)
+    const len = Math.round(
+      radiusRatio * Math.sqrt(radiusJ2 - Math.pow(j, 2)));
+    const jmax = centerValues[dj] + j;
+    const jmin = centerValues[dj] - j;
+    for (let i = 0; i < len; ++i) {
+      const imax = centerValues[di] + i;
+      const imin = centerValues[di] - i;
+
+      // right
+      values[di] = imax;
+      // right - top
+      values[dj] = jmax;
+      indices.push(new Index(values.slice()));
+      // right - bottom
+      if (jmin !== jmax) {
+        values[dj] = jmin;
+        indices.push(new Index(values.slice()));
+      }
+
+      // left
+      if (imin !== imax) {
+        values[di] = imin;
+        // left - top
+        values[dj] = jmax;
+        indices.push(new Index(values.slice()));
+        // left - bottom
+        if (jmin !== jmax) {
+          values[dj] = jmin;
+          indices.push(new Index(values.slice()));
+        }
       }
     }
   }
-
-  // return
-  return quant;
-};
+  return indices;
+}

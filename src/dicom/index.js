@@ -1,0 +1,104 @@
+import {DataElement} from './dataElement.js';
+import {
+  getDwvVersion,
+  getTypedArray,
+  getReverseOrientation,
+  hasDicomPrefix,
+  DicomParser
+} from './dicomParser.js';
+import {
+  getUID,
+  translateWriterRules,
+  DicomWriter,
+  WriterRule,
+  WriterRuleActions
+} from './dicomWriter.js';
+import {addTagsToDictionary} from './dictionary.js';
+import {
+  Tag,
+  getTagFromKey,
+  getPixelDataTag,
+} from './dicomTag.js';
+import {
+  TagInfo,
+  getDicomTagInfo,
+  getDicomTagGroupName
+} from './dicomTagInfo.js';
+import {
+  DicomCode,
+  getSegmentationCode
+} from './dicomCode.js';
+import {
+  getReferencedSeriesUID,
+  getReferencedSeriesUIDFromRTStruct
+} from './dicomImage.js';
+import {
+  getRTStructFromElements,
+  RTROIContour,
+  RTROI
+} from './dicomRTStruct.js';
+import {
+  DicomSRContent,
+  getSRContent,
+  getDicomSRContentItem
+} from './dicomSRContent.js';
+import {MaskSegment} from './dicomSegment.js';
+import {
+  NormalisedManufacturers,
+  getManufacturer,
+  getNormalisedManufacturer
+} from './dicomManufacturer.js';
+import {
+  defaultPrivateBValueRules,
+  defaultVolumeIdCandidates
+} from './dicomVolume.js';
+import {
+  getAsSimpleTagValues,
+  getElementsFromSimpleTagValues,
+  mergeTagValues
+} from './simpleTagValues.js';
+import {dcmdump} from './dicomElementsWrapper.js';
+
+// also export typedefs
+export * from './types.js';
+
+export {
+  DataElement,
+  DicomCode,
+  DicomParser,
+  DicomSRContent,
+  DicomWriter,
+  MaskSegment,
+  Tag,
+  TagInfo,
+  WriterRule,
+  WriterRuleActions,
+  NormalisedManufacturers,
+  addTagsToDictionary,
+  getDwvVersion,
+  getUID,
+  getSegmentationCode,
+  getTypedArray,
+  getTagFromKey,
+  getDicomTagInfo,
+  getDicomTagGroupName,
+  getPixelDataTag,
+  getReverseOrientation,
+  getSRContent,
+  getDicomSRContentItem,
+  getReferencedSeriesUID,
+  getReferencedSeriesUIDFromRTStruct,
+  getRTStructFromElements,
+  RTROIContour,
+  RTROI,
+  getManufacturer,
+  getNormalisedManufacturer,
+  hasDicomPrefix,
+  translateWriterRules,
+  defaultPrivateBValueRules,
+  defaultVolumeIdCandidates,
+  getAsSimpleTagValues,
+  getElementsFromSimpleTagValues,
+  mergeTagValues,
+  dcmdump,
+};

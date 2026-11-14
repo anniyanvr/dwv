@@ -1,58 +1,96 @@
+import {describe, test, expect, vi} from 'vitest';
+import {logger} from '../../src/utils/logger.js';
+
 /**
  * Tests for the 'utils/logger' file.
  */
-/** @module tests/utils */
-// Do not warn if these variables were not defined before.
-/* global QUnit */
-QUnit.module('utils');
 
-/**
- * Tests for {@link dwv.utils.logger}.
- *
- * @function module:tests/utils~logger
- */
-QUnit.test('Test logging.', function (assert) {
-  // use the console logger
-  dwv.logger = dwv.utils.logger.console;
+describe('utils', () => {
 
-  // default console log level is WARN
-  console.groupCollapsed('test log level WARN');
-  dwv.logger.trace('[FAIL] logger.trace + level.WARN -> should NOT see');
-  dwv.logger.debug('[FAIL] logger.debug + level.WARN -> should NOT see');
-  dwv.logger.info('[FAIL] logger.info + level.WARN -> should NOT see');
-  dwv.logger.warn('[PASS] logger.warn + level.WARN -> should see');
-  dwv.logger.error('[PASS] logger.error + level.WARN -> should see');
-  console.groupEnd();
+  const spies = {
+    trace: vi.spyOn(console, 'trace').mockImplementation(() => {}),
+    debug: vi.spyOn(console, 'debug').mockImplementation(() => {}),
+    info: vi.spyOn(console, 'info').mockImplementation(() => {}),
+    warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
+    error: vi.spyOn(console, 'error').mockImplementation(() => {})
+  };
 
-  // INFO log level
-  console.groupCollapsed('test log level INFO');
-  dwv.logger.level = dwv.utils.logger.levels.INFO;
-  dwv.logger.trace('[FAIL] logger.trace + level.INFO -> should NOT see');
-  dwv.logger.debug('[FAIL] logger.debug + level.INFO -> should NOT see');
-  dwv.logger.info('[PASS] logger.info + level.INFO -> should see');
-  dwv.logger.warn('[PASS] logger.warn + level.INFO -> should see');
-  dwv.logger.error('[PASS] logger.error + level.INFO -> should see');
-  console.groupEnd();
+  /**
+   * Expect the input spy name to have been called
+   * but not the others. If not a good name, expects
+   * all the spys to not have been called.
+   *
+   * @param {string} spyName The name of the spy.
+   */
+  function expectSpyCalled(spyName) {
+    const keys = Object.keys(spies);
+    for (const key of keys) {
+      if (key === spyName) {
+        expect(spies[key]).toHaveBeenCalled();
+      } else {
+        expect(spies[key]).not.toHaveBeenCalled();
+      }
+    }
+    // clear mocks to reset called counts
+    vi.clearAllMocks();
+  }
 
-  // DEBUG log level
-  console.groupCollapsed('test log level DEBUG');
-  dwv.logger.level = dwv.utils.logger.levels.DEBUG;
-  dwv.logger.trace('[FAIL] logger.trace + level.DEBUG -> should NOT see');
-  dwv.logger.debug('[PASS] logger.debug + level.DEBUG -> should see');
-  dwv.logger.info('[PASS] logger.info + level.DEBUG -> should see');
-  dwv.logger.warn('[PASS] logger.warn + level.DEBUG -> should see');
-  dwv.logger.error('[PASS] logger.error + level.DEBUG -> should see');
-  console.groupEnd();
+  /**
+   * Tests for {@link utils.logger}.
+   *
+   * @function module:tests/utils~logging
+   */
+  test('logging', () => {
+    // default console log level is WARN
+    logger.trace('[FAIL] logger.trace + level.WARN -> should NOT see');
+    expectSpyCalled('');
+    logger.debug('[FAIL] logger.debug + level.WARN -> should NOT see');
+    expectSpyCalled('');
+    logger.info('[FAIL] logger.info + level.WARN -> should NOT see');
+    expectSpyCalled('');
+    logger.warn('[PASS] logger.warn + level.WARN -> should see');
+    expectSpyCalled('warn');
+    logger.error('[PASS] logger.error + level.WARN -> should see');
+    expectSpyCalled('error');
 
-  // ERROR log level
-  console.groupCollapsed('test log level ERROR');
-  dwv.logger.level = dwv.utils.logger.levels.ERROR;
-  dwv.logger.trace('[FAIL] logger.trace + level.ERROR -> should NOT see');
-  dwv.logger.debug('[FAIL] logger.debug + level.ERROR -> should NOT see');
-  dwv.logger.info('[FAIL] logger.info + level.ERROR -> should NOT see');
-  dwv.logger.warn('[FAIL] logger.warn + level.ERROR -> should NOT see');
-  dwv.logger.error('[PASS] logger.error + level.ERROR -> should see');
-  console.groupEnd();
+    // INFO log level
+    logger.level = logger.levels.INFO;
+    logger.trace('[FAIL] logger.trace + level.INFO -> should NOT see');
+    expectSpyCalled('');
+    logger.debug('[FAIL] logger.debug + level.INFO -> should NOT see');
+    expectSpyCalled('');
+    logger.info('[PASS] logger.info + level.INFO -> should see');
+    expectSpyCalled('info');
+    logger.warn('[PASS] logger.warn + level.INFO -> should see');
+    expectSpyCalled('warn');
+    logger.error('[PASS] logger.error + level.INFO -> should see');
+    expectSpyCalled('error');
 
-  assert.ok(1, 'Logger output');
+    // DEBUG log level
+    logger.level = logger.levels.DEBUG;
+    logger.trace('[FAIL] logger.trace + level.DEBUG -> should NOT see');
+    expectSpyCalled('');
+    logger.debug('[PASS] logger.debug + level.DEBUG -> should see');
+    expectSpyCalled('debug');
+    logger.info('[PASS] logger.info + level.DEBUG -> should see');
+    expectSpyCalled('info');
+    logger.warn('[PASS] logger.warn + level.DEBUG -> should see');
+    expectSpyCalled('warn');
+    logger.error('[PASS] logger.error + level.DEBUG -> should see');
+    expectSpyCalled('error');
+
+    // ERROR log level
+    logger.level = logger.levels.ERROR;
+    logger.trace('[FAIL] logger.trace + level.ERROR -> should NOT see');
+    expectSpyCalled('');
+    logger.debug('[FAIL] logger.debug + level.ERROR -> should NOT see');
+    expectSpyCalled('');
+    logger.info('[FAIL] logger.info + level.ERROR -> should NOT see');
+    expectSpyCalled('');
+    logger.warn('[FAIL] logger.warn + level.ERROR -> should NOT see');
+    expectSpyCalled('');
+    logger.error('[PASS] logger.error + level.ERROR -> should see');
+    expectSpyCalled('error');
+  });
+
 });

@@ -1,101 +1,126 @@
+import {describe, test, assert} from 'vitest';
+import {
+  getStats,
+  getBasicStats,
+  guid
+} from '../../src/math/stats.js';
+
 /**
  * Tests for the 'math/stats.js' file.
  */
-// Do not warn if these variables were not defined before.
-/* global QUnit */
-QUnit.module('stats');
 
-/**
- * Tests for {@link dwv.math.Stats.equals}.
- *
- * @function module:tests/math~Stats~equals
- */
-QUnit.test('Test Stats equals.', function (assert) {
-  var stats0 = new dwv.math.SimpleStats(0, 0, 0, 0);
-  assert.notOk(stats0.equals(null), 'Stats should not be equal to null.');
-  var stats1 = new dwv.math.SimpleStats(0, 0, 0, 0);
-  assert.ok(stats0.equals(stats1), 'Stats should be equal.');
-  var stats2 = new dwv.math.SimpleStats(0, 1, 2, 3);
-  assert.notOk(stats0.equals(stats2), 'Stats should not be equal.');
-});
+describe('math', () => {
 
-/**
- * Tests for {@link dwv.math.getSimpleStats}.
- *
- * @function module:tests/math~getSimpleStats
- */
-QUnit.test('Test getSimpleStats.', function (assert) {
-  var arr0 = [1, 2, 3, 4, 5];
-  var q0 = dwv.math.getStats(arr0);
-  // min
-  assert.equal(q0.getMin(), 1, 'min.0');
-  // max
-  assert.equal(q0.getMax(), 5, 'max.0');
-  // mean
-  assert.equal(q0.getMean(), 3, 'mean.0');
-  // stdDev
-  assert.equal(q0.getStdDev(), 1.4142135623730951, 'stdDev.0');
+  /**
+   * Tests for {@link getBasicStats}.
+   *
+   * @function module:tests/math~getbasicstats
+   */
+  test('getBasicStats', () => {
+    const arr0 = [1, 2, 3, 4, 5];
+    const q0 = getBasicStats(arr0);
+    // min
+    assert.equal(q0.min, 1, 'min.0');
+    // max
+    assert.equal(q0.max, 5, 'max.0');
+    // mean
+    assert.equal(q0.mean, 3, 'mean.0');
+    // stdDev
+    assert.equal(q0.stdDev, 1.4142135623730951, 'stdDev.0');
 
-  var arr1 = [9, 2, 5, 4, 12, 7, 8, 11, 9, 3, 7, 4, 12, 5, 4, 10, 9, 6, 9, 4];
-  var q1 = dwv.math.getStats(arr1);
-  // min
-  assert.equal(q1.getMin(), 2, 'min.1');
-  // max
-  assert.equal(q1.getMax(), 12, 'max.1');
-  // mean
-  assert.equal(q1.getMean(), 7, 'mean.1');
-  // stdDev
-  assert.equal(q1.getStdDev(), 2.9832867780352594, 'stdDev.1');
-});
+    /* eslint-disable @stylistic/js/array-element-newline */
+    const arr1 = [
+      9, 2, 5, 4,
+      12, 7, 8, 11,
+      9, 3, 7, 4,
+      12, 5, 4, 10,
+      9, 6, 9, 4
+    ];
+    /* eslint-enable @stylistic/js/array-element-newline */
+    const q1 = getBasicStats(arr1);
+    // min
+    assert.equal(q1.min, 2, 'min.1');
+    // max
+    assert.equal(q1.max, 12, 'max.1');
+    // mean
+    assert.equal(q1.mean, 7, 'mean.1');
+    // stdDev
+    assert.equal(q1.stdDev, 2.9832867780352594, 'stdDev.1');
 
-/**
- * Tests for {@link dwv.math.getFullStats}.
- *
- * @function module:tests/math~getFullStats
- */
-QUnit.test('Test getFullStats.', function (assert) {
-  var arr0 = [15, 20, 35, 40, 50];
-  var q0 = dwv.math.getFullStats(arr0);
-  // median
-  assert.equal(q0.getMedian(), 35, 'median.0');
-  // p25
-  assert.equal(q0.getP25(), 20, 'p25.0');
-  // p75
-  assert.equal(q0.getP75(), 40, 'p75.0');
+    // empty array
+    assert.isUndefined(getBasicStats([]), 'empty');
 
-  var arr1 = [15, 20, 35, 40, 50, 60];
-  var q1 = dwv.math.getFullStats(arr1);
-  // median
-  assert.equal(q1.getMedian(), 37.5, 'median.1');
-  // p25
-  assert.equal(q1.getP25(), 23.75, 'p25.1');
-  // p75
-  assert.equal(q1.getP75(), 47.5, 'p75.1');
-});
+    // large values with small variance
+    const arr2 = [1e9 + 1, 1e9 + 2, 1e9 + 3];
+    const q2 = getBasicStats(arr2);
+    assert.equal(q2.mean, 1e9 + 2, 'mean.2');
+    assert.approximately(q2.stdDev, Math.sqrt(2 / 3), 1e-12, 'stdDev.2');
+  });
 
-/**
- * Tests for {@link dwv.math.guid}.
- *
- * @function module:tests/math~guid
- */
-QUnit.test('Test GUID.', function (assert) {
-  var id0 = dwv.math.guid();
-  var id1 = dwv.math.guid();
-  assert.equal((id0 === id1), false, 'Two GUids should not be equal.');
+  /**
+   * Tests for {@link getFullStats}.
+   *
+   * @function module:tests/math~getfullstats
+   */
+  test('getFullStats', () => {
+    const arr0 = [15, 20, 35, 40, 50];
+    const q0 = getStats(arr0, ['median']);
+    // median
+    assert.equal(q0.median, 35, 'median.0');
+    // p25
+    assert.equal(q0.p25, 20, 'p25.0');
+    // p75
+    assert.equal(q0.p75, 40, 'p75.0');
 
-  var duplicates = 0;
-  // create an array of guids
-  var ids = [];
-  for (var i = 0; i < 1000; ++i) {
-    ids[ids.length] = dwv.math.guid();
-  }
-  // check duplicates
-  var id = 0;
-  for (i = 0; i < ids.length - 1; ++i) {
-    id = ids.pop();
-    if (ids.indexOf(id) !== -1) {
-      ++duplicates;
+    const arr1 = [15, 20, 35, 40, 50, 60];
+    const q1 = getStats(arr1, ['median']);
+    // median
+    assert.equal(q1.median, 37.5, 'median.1');
+    // p25
+    assert.equal(q1.p25, 23.75, 'p25.1');
+    // p75
+    assert.equal(q1.p75, 47.5, 'p75.1');
+
+    // single value
+    const q2 = getStats([5], ['median']);
+    assert.equal(q2.median, 5, 'median.2');
+    assert.equal(q2.p25, 5, 'p25.2');
+    assert.equal(q2.p75, 5, 'p75.2');
+
+    // empty array
+    assert.isUndefined(getStats([], ['median']), 'empty');
+
+    // input is not modified
+    const arr3 = [3, 1, 2];
+    const q3 = getStats(arr3, ['median']);
+    assert.equal(q3.median, 2, 'median.3');
+    assert.deepEqual(arr3, [3, 1, 2], 'input not sorted');
+  });
+
+  /**
+   * Tests for {@link guid}.
+   *
+   * @function module:tests/math~guid
+   */
+  test('GUID', () => {
+    const id0 = guid();
+    const id1 = guid();
+    assert.equal((id0 === id1), false, 'Two GUids should not be equal.');
+
+    let duplicates = 0;
+    // create an array of guids
+    const ids = [];
+    for (let i = 0; i < 1000; ++i) {
+      ids[ids.length] = guid();
     }
-  }
-  assert.equal(duplicates, 0, '1000 GUids should not be equal.');
+    // check duplicates
+    for (let i = 0; i < ids.length - 1; ++i) {
+      const id = ids.pop();
+      if (ids.indexOf(id) !== -1) {
+        ++duplicates;
+      }
+    }
+    assert.equal(duplicates, 0, '1000 GUids should not be equal.');
+  });
+
 });

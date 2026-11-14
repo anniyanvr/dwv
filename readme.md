@@ -1,27 +1,39 @@
-DWV
-===
+# DWV
 
-DWV (DICOM Web Viewer) is an open source zero footprint medical image viewer library. It uses _only_ javascript and HTML5 technologies, meaning that it can be run on any platform that provides a modern browser (laptop, tablet, phone and even modern TVs). It can load local or remote data in DICOM format (the standard for medical imaging data such as MR, CT, Echo, Mammo, NM...) and  provides standard tools for its manipulation such as contrast, zoom, drag, possibility to draw regions on top of the image and imaging filters such as threshold and sharpening.
+DWV (DICOM Web Viewer) is an open source zero footprint medical image viewer library. It uses _only_ javascript and HTML5 technologies, meaning that it can be run on any platform that provides a modern browser (laptop, tablet, phone and even modern TVs). It can load local or remote data in DICOM format (the standard for medical imaging data such as MR, CT, Echo, Mammo, NM...) and provides standard tools for its manipulation such as scroll, contrast, zoom, pan, MPR, annotation and imaging filters such as threshold and sharpening.
 
-[![Node.js CI](https://github.com/ivmartel/dwv/actions/workflows/nodejs-ci.yml/badge.svg)](https://github.com/ivmartel/dwv/actions/workflows/nodejs-ci.yml)
- [![Coverage Status](https://img.shields.io/coveralls/ivmartel/dwv.svg)](https://coveralls.io/r/ivmartel/dwv?branch=master) [![Code Climate](https://codeclimate.com/github/ivmartel/dwv.svg)](https://codeclimate.com/github/ivmartel/dwv) [![Dependency Status](https://david-dm.org/ivmartel/dwv.svg)](https://david-dm.org/ivmartel/dwv) [![npm](https://img.shields.io/npm/v/dwv.svg)](https://www.npmjs.com/package/dwv)
-[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fivmartel%2Fdwv.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fivmartel%2Fdwv?ref=badge_shield)
-
-Try a [live demo](https://ivmartel.github.io/dwv/) and read a lot more information on the [docs](https://ivmartel.github.io/dwv/doc/stable/) (such as [examples](https://ivmartel.github.io/dwv/doc/stable/tutorial-examples.html), [dicom conformance](https://ivmartel.github.io/dwv/doc/stable/tutorial-conformance.html), [pacs integrations](https://ivmartel.github.io/dwv/doc/stable/tutorial-integrations.html)). You can also check out the [wiki](https://github.com/ivmartel/dwv/wiki).
-
- - All coding/implementation contributions and comments are welcome.
- - DWV is not certified for diagnostic use.<sup>[1](#footnote1)</sup>
- - Released under GNU GPL-3.0 license (see [license.txt](license.txt)).
-
-If you have additional questions, please [open an issue](https://www.github.com/ivmartel/dwv/issues).
-
-And for those who want to support the dwv development:
-
+[![Node.js CI](https://github.com/ivmartel/dwv/actions/workflows/nodejs-ci.yml/badge.svg)](https://github.com/ivmartel/dwv/actions/workflows/nodejs-ci.yml) [![npm](https://img.shields.io/npm/v/dwv.svg)](https://www.npmjs.com/package/dwv)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=VQWYY8ZS75H3E&currency_code=EUR&bn=PP%2dDonationsBF%3abtn_donateCC_LG%2egif%3aNonHosted)
+
+Try a [live demo](https://ivmartel.github.io/dwv/) and read a lot more information on the [docs](https://ivmartel.github.io/dwv/doc/stable/index.html) (such as [examples](https://ivmartel.github.io/dwv/doc/stable/tutorial-examples.html), [dicom conformance](https://ivmartel.github.io/dwv/doc/stable/tutorial-conformance.html), [pacs integrations](https://ivmartel.github.io/dwv/doc/stable/tutorial-integrations.html)). You can also check out the [wiki](https://github.com/ivmartel/dwv/wiki).
+
+- All coding/implementation contributions and comments are welcome, see the [contributing guidelines](.github/contributing.md).
+- DWV is not certified for diagnostic use.<sup>[1](#footnote1)</sup>
+- Released under GNU GPL-3.0 license (see [license.txt](license.txt)).
+
+If you have questions, please [open an issue](https://www.github.com/ivmartel/dwv/issues).
+
+## Available Scripts
+
+- `ìnstall`: install dependencies
+- `lint`: run code linting
+- `test`: run tests with live reload
+- `test-ci`: one shot test run
+- `build`: create release files
+- `doc`: create documentation
+
+I'm using `yarn` as the main package manager. Best to use it to install since
+the lock file (that contains the exact dependency tree) is a yarn file. Run `corepack enable` to install `yarn` shims that read the
+`packageManager` field of `package.json` and download and run that exact yarn
+version. Without enabling it, `corepack yarn <script>` (for ex
+`corepack yarn start`) does the same for a single command.
+Corepack is bundled with Node up to v24 only; from Node 25, install it first
+with `npm install -g corepack`.
+All scripts also work with `npm`.
 
 ## Steps to run the viewer from scratch
 
-``` bash
+```bash
 # get the code
 git clone https://github.com/ivmartel/dwv.git
 
@@ -31,36 +43,12 @@ cd dwv
 # install dependencies
 yarn install
 
-# launch tests: will open a browser with test pages
-yarn run test
+# launch: will open a browser with example pages
+yarn run start
 ```
 
-## Available Scripts
-
-``` bash
-# install dependencies
-yarn install
-
-# run linting
-yarn run lint
-
-# run unit tests with hot reload at localhost:8080
-yarn run test
-
-# create release files
-yarn run build
-
-# create documentation
-yarn run doc
-
-# watch for changes and copy build (to be connected with a demo viewer)
-yarn run dev
-```
-
-Using `yarn` as the main package manager. Best to use it to install since
-the lock file (that contains the exact dependency tree) is a yarn file.
-All scripts also work with `npm`.
+This will open your default browser with the different example pages, check the 'viewer' link for a simple test viewer.
 
 ## Notes
 
-<a name="footnote1">1</a>: Certification refers to official medical software certification that are issued by the FDA or EU Notified Bodies. The sentence here serves as a reminder that the Dicom Web Viewer is not ceritifed, and comes with no warranties (and no possible liability of its authors) as stated in the [license](license.txt). To learn more about standards used in certification, see the [wikipedia Medical software](https://en.wikipedia.org/wiki/Medical_software) page. 
+<a name="footnote1">1</a>: Certification refers to official medical software certification that are issued by the FDA or EU Notified Bodies. The sentence here serves as a reminder that the Dicom Web Viewer is not ceritifed, and comes with no warranties (and no possible liability of its authors) as stated in the [license](license.txt). To learn more about standards used in certification, see the [wikipedia Medical software](https://en.wikipedia.org/wiki/Medical_software) page.

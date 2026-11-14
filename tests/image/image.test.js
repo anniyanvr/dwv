@@ -1,478 +1,899 @@
-// namespace
-var dwv = dwv || {};
-dwv.test = dwv.test || {};
+import {describe, test, assert, vi} from 'vitest';
+import {Point, Point3D} from '../../src/math/point.js';
+import {Index} from '../../src/math/index.js';
+import {getStats} from '../../src/math/stats.js';
+import {arrayEquals} from '../../src/utils/array.js';
+import {Size} from '../../src/image/size.js';
+import {Spacing} from '../../src/image/spacing.js';
+import {Geometry} from '../../src/image/geometry.js';
+import {RescaleSlopeAndIntercept} from '../../src/image/rsi.js';
+import {Image} from '../../src/image/image.js';
+import {ImageFactory} from '../../src/image/imageFactory.js';
+import {WindowLevel, equalWl} from '../../src/image/windowLevel.js';
+import {WindowPreset} from '../../src/image/windowPreset.js';
+import {ResamplingFilter} from '../../src/image/resamplingFilter.js';
+import {Matrix33} from '../../src/math/matrix.js';
+
+/**
+ * Fake web worker that runs the resampling filter as the
+ * resampling worker does (see 'image/resampling.worker.js').
+ */
+class FakeResamplingWorker {
+  onmessage;
+  onerror;
+
+  /**
+   * @param {object} message The worker message.
+   */
+  postMessage(message) {
+    setTimeout(() => {
+      this.onmessage({data: new ResamplingFilter().run(message)});
+    });
+  }
+
+  terminate() {}
+}
 
 /**
  * Tests for the 'image/image.js' file.
  */
-// Do not warn if these variables were not defined before.
-/* global QUnit */
-QUnit.module('image');
 
-/**
- * Compare an image and a buffer.
- *
- * @param {object} image The input image.
- * @param {object} size The size of the input buffer.
- * @param {Array} buffer The input buffer.
- * @param {object} rsi The rescale slope of the input buffer.
- * @returns {object} Statistics of the value and rescaled value differences.
- */
-dwv.test.compareImageAndBuffer = function (image, size, buffer, rsi) {
-  var diffs = [];
-  var diffsRescaled = [];
+describe('image', () => {
 
-  // calculate differences
-  var index = 0;
-  for (var k = 0; k < size.getNumberOfSlices(); ++k) {
-    for (var j = 0; j < size.getNumberOfRows(); ++j) {
-      for (var i = 0; i < size.getNumberOfColumns(); ++i) {
-        var diff = Math.abs(image.getValue(i, j, k) - buffer[index]);
-        if (diff !== 0) {
-          diffs.push(diff);
+  /**
+   * Compare an image and a buffer.
+   *
+   * @param {Image} image The input image.
+   * @param {Size} size The size of the input buffer.
+   * @param {Array} buffer The input buffer.
+   * @param {object} rsi The rescale slope of the input buffer.
+   * @returns {object} Statistics of the value and rescaled value differences.
+   */
+  function compareImageAndBuffer(image, size, buffer, rsi) {
+    const diffs = [];
+    const diffsRescaled = [];
+
+    // calculate differences
+    let index = 0;
+    for (let k = 0; k < size.get(2); ++k) {
+      for (let j = 0; j < size.get(1); ++j) {
+        for (let i = 0; i < size.get(0); ++i) {
+          const diff = Math.abs(image.getValue(i, j, k) - buffer[index]);
+          if (diff !== 0) {
+            diffs.push(diff);
+          }
+          const diffRescaled = Math.abs(
+            image.getRescaledValue(i, j, k) - rsi.apply(buffer[index]));
+          if (diffRescaled !== 0) {
+            diffsRescaled.push(diffRescaled);
+          }
+          ++index;
         }
-        var diffRescaled = Math.abs(
-          image.getRescaledValue(i, j, k) - rsi.apply(buffer[index]));
-        if (diffRescaled !== 0) {
-          diffsRescaled.push(diffRescaled);
-        }
-        ++index;
       }
     }
-  }
 
-  // calculate stats if necessary
-  var statsDiff = new dwv.math.SimpleStats(0, 0, 0, 0);
-  if (diffs.length !== 0) {
-    statsDiff = dwv.math.getStats(diffs);
-  }
-  var statsDiffRescaled = new dwv.math.SimpleStats(0, 0, 0, 0);
-  if (diffsRescaled.length !== 0) {
-    statsDiffRescaled = dwv.math.SimpleStats(diffsRescaled);
-  }
-
-  // return stats
-  return {
-    valuesStats: statsDiff,
-    rescaledStats: statsDiffRescaled
-  };
-};
-
-/**
- * Tests for {@link dwv.image.Image} getValue.
- *
- * @function module:tests/image~getvalue
- */
-QUnit.test('Test Image getValue.', function (assert) {
-  var zeroStats = new dwv.math.SimpleStats(0, 0, 0, 0);
-
-  // create a simple image
-  var size0 = 4;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
-  // test its geometry
-  assert.equal(image0.getGeometry(), imgGeometry0, 'Image geometry');
-  // test its values
-  var rsi0 = new dwv.image.RescaleSlopeAndIntercept(1, 0);
-  var res0 = dwv.test.compareImageAndBuffer(image0, imgSize0, buffer0, rsi0);
-  assert.propEqual(
-    res0.valuesStats.asObject(),
-    zeroStats.asObject(),
-    'Values should be equal');
-  assert.propEqual(
-    res0.rescaledStats.asObject(),
-    zeroStats.asObject(),
-    'Rescaled values should be equal');
-  // outside value
-  assert.equal(isNaN(image0.getValue(4, 3, 0)), true, 'Value outside is NaN');
-  // TODO: wrong, should not be accessed
-  assert.equal(image0.getValue(5, 0, 0), 1 * size0 + 1, 'Value at 5,0,0');
-  // check range
-  var theoRange0 = {min: 0, max: (size0 * size0) - 1};
-  var imgRange00 = image0.getDataRange();
-  assert.equal(imgRange00.max, theoRange0.max, 'Range max');
-  assert.equal(imgRange00.min, theoRange0.min, 'Range min');
-  var imgRange01 = image0.getRescaledDataRange();
-  assert.equal(imgRange01.max, theoRange0.max, 'Rescaled range max');
-  assert.equal(imgRange01.min, theoRange0.min, 'Rescaled range min');
-
-  // image with rescale
-  var image1 = new dwv.image.Image(imgGeometry0, [buffer0]);
-  var slope1 = 2;
-  var intercept1 = 10;
-  var rsi1 = new dwv.image.RescaleSlopeAndIntercept(slope1, intercept1);
-  image1.setRescaleSlopeAndIntercept(rsi1);
-  // test its geometry
-  assert.equal(image1.getGeometry(), imgGeometry0, 'Image geometry');
-  // test its values
-  var res1 = dwv.test.compareImageAndBuffer(image1, imgSize0, buffer0, rsi1);
-  assert.propEqual(
-    res1.valuesStats.asObject(),
-    zeroStats.asObject(),
-    'Values should be equal');
-  assert.propEqual(
-    res1.rescaledStats.asObject(),
-    zeroStats.asObject(),
-    'Rescaled values should be equal');
-  // check range
-  var imgRange10 = image0.getDataRange();
-  assert.equal(imgRange10.max, theoRange0.max, 'Range max');
-  assert.equal(imgRange10.min, theoRange0.min, 'Range min');
-  var theoRange1 = {
-    min: theoRange0.min * slope1 + intercept1,
-    max: theoRange0.max * slope1 + intercept1
-  };
-  var imgRange11 = image1.getRescaledDataRange();
-  assert.equal(imgRange11.max, theoRange1.max, 'Rescaled range max');
-  assert.equal(imgRange11.min, theoRange1.min, 'Rescaled range min');
-});
-
-/**
- * Tests for {@link dwv.image.Image} histogram.
- *
- * @function module:tests/image~histogram
- */
-QUnit.test('Test Image histogram.', function (assert) {
-  // create a simple image
-  var size0 = 4;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
-
-  // histogram
-  var histogram = image0.getHistogram();
-  assert.equal(histogram.length, size0 * size0, 'histogram size');
-  var histoContentTest = true;
-  for (var j = 0; j < size0 * size0; ++j) {
-    if (histogram[j][0] !== j) {
-      histoContentTest = false;
-      break;
+    // calculate stats if necessary
+    let statsDiff = {min: 0, max: 0, mean: 0, stdDev: 0};
+    if (diffs.length !== 0) {
+      statsDiff = getStats(diffs);
     }
-    if (histogram[j][1] !== 1) {
-      histoContentTest = false;
-      break;
+    let statsDiffRescaled = {min: 0, max: 0, mean: 0, stdDev: 0};
+    if (diffsRescaled.length !== 0) {
+      statsDiffRescaled = getStats(diffsRescaled);
     }
-  }
-  assert.equal(histoContentTest, true, 'histogram content');
-});
 
-/**
- * Tests for {@link dwv.image.Image} append.
- *
- * @function module:tests/image~append
- */
-QUnit.test('Test Image append slice.', function (assert) {
-  var size = 4;
-  var imgSize = new dwv.image.Size(size, size, 2);
-  var imgSizeMinusOne = new dwv.image.Size(size, size, 1);
-  var imgSpacing = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(
-    imgOrigin, imgSizeMinusOne, imgSpacing);
-  imgGeometry0.appendOrigin(new dwv.math.Point3D(0, 0, 1), 1);
-
-  // slice to append
-  var sliceSize = new dwv.image.Size(size, size, 1);
-  var sliceBuffer = new Int16Array(sliceSize.getTotalSize());
-  for (var i = 0; i < size * size; ++i) {
-    sliceBuffer[i] = 2;
+    // return stats
+    return {
+      valuesStats: statsDiff,
+      rescaledStats: statsDiffRescaled
+    };
   }
 
-  // image buffer
-  var buffer = new Int16Array(imgSize.getTotalSize());
-  for (var j = 0; j < size * size; ++j) {
-    buffer[j] = 0;
-  }
-  for (var k = size * size; k < 2 * size * size; ++k) {
-    buffer[k] = 1;
-  }
+  /**
+   * Tests for {@link Image} getValue.
+   *
+   * @function module:tests/image~imageGetvalue
+   */
+  test('Image getValue', () => {
+    const zeroStats = {min: 0, max: 0, mean: 0, stdDev: 0};
 
-  // image 0
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer], 1, ['0']);
-  // append null
-  assert.throws(function () {
-    image0.appendSlice(null);
-  }, new Error('Cannot append null slice'), 'append null slice');
-  // real slice
-  var sliceOrigin = new dwv.math.Point3D(0, 0, -1);
-  var sliceGeometry = new dwv.image.Geometry(
-    sliceOrigin, sliceSize, imgSpacing);
-  var slice0 = new dwv.image.Image(sliceGeometry, [sliceBuffer], 1, ['1']);
-  // append slice before
-  image0.appendSlice(slice0);
-  // test its values
-  assert.equal(image0.getValue(0, 0, 0), 2, 'Value at 0,0,0 (append before)');
-  assert.equal(image0.getValue(3, 3, 0), 2, 'Value at 3,3,0 (append before)');
-  assert.equal(image0.getValue(0, 0, 1), 0, 'Value at 0,0,1 (append before)');
-  assert.equal(image0.getValue(3, 3, 1), 0, 'Value at 3,3,1 (append before)');
-  assert.equal(image0.getValue(0, 0, 2), 1, 'Value at 0,0,2 (append before)');
-  assert.equal(image0.getValue(3, 3, 2), 1, 'Value at 3,3,2 (append before)');
-  // test its positions
-  var sliceOrigins0 = [];
-  sliceOrigins0[0] = new dwv.math.Point3D(0, 0, -1);
-  sliceOrigins0[1] = new dwv.math.Point3D(0, 0, 0);
-  sliceOrigins0[2] = new dwv.math.Point3D(0, 0, 1);
-  assert.deepEqual(
-    imgGeometry0.getOrigins(),
-    sliceOrigins0,
-    'Slice positions (append before)');
-
-  // image 1
-  var imgGeometry1 = new dwv.image.Geometry(
-    imgOrigin, imgSizeMinusOne, imgSpacing);
-  imgGeometry1.appendOrigin(new dwv.math.Point3D(0, 0, 1), 1);
-  var image1 = new dwv.image.Image(imgGeometry1, [buffer], 1, ['0']);
-  var sliceOrigin1 = new dwv.math.Point3D(0, 0, 2);
-  var sliceGeometry1 = new dwv.image.Geometry(
-    sliceOrigin1, sliceSize, imgSpacing);
-  var slice1 = new dwv.image.Image(sliceGeometry1, [sliceBuffer], 1, ['0']);
-  // append slice before
-  image1.appendSlice(slice1);
-  // test its values
-  assert.equal(image1.getValue(0, 0, 0), 0, 'Value at 0,0,0 (append after)');
-  assert.equal(image1.getValue(3, 3, 0), 0, 'Value at 3,3,0 (append after)');
-  assert.equal(image1.getValue(0, 0, 1), 1, 'Value at 0,0,1 (append after)');
-  assert.equal(image1.getValue(3, 3, 1), 1, 'Value at 3,3,1 (append after)');
-  assert.equal(image1.getValue(0, 0, 2), 2, 'Value at 0,0,2 (append after)');
-  assert.equal(image1.getValue(3, 3, 2), 2, 'Value at 3,3,2 (append after)');
-  // test its positions
-  var sliceOrigins1 = [];
-  sliceOrigins1[0] = new dwv.math.Point3D(0, 0, 0);
-  sliceOrigins1[1] = new dwv.math.Point3D(0, 0, 1);
-  sliceOrigins1[2] = new dwv.math.Point3D(0, 0, 2);
-  assert.deepEqual(
-    imgGeometry1.getOrigins(),
-    sliceOrigins1,
-    'Slice positions (append after)');
-
-  // image 2
-  var imgGeometry2 = new dwv.image.Geometry(
-    imgOrigin, imgSizeMinusOne, imgSpacing);
-  imgGeometry2.appendOrigin(new dwv.math.Point3D(0, 0, 1), 1);
-  var image2 = new dwv.image.Image(imgGeometry2, [buffer], 1, ['0']);
-  var sliceOrigin2 = new dwv.math.Point3D(0, 0, 0.4);
-  var sliceGeometry2 = new dwv.image.Geometry(
-    sliceOrigin2, sliceSize, imgSpacing);
-  var slice2 = new dwv.image.Image(sliceGeometry2, [sliceBuffer], 1, ['0']);
-  // append slice before
-  image2.appendSlice(slice2);
-  // test its values
-  assert.equal(image2.getValue(0, 0, 0), 0, 'Value at 0,0,0 (append between)');
-  assert.equal(image2.getValue(3, 3, 0), 0, 'Value at 3,3,0 (append between)');
-  assert.equal(image2.getValue(0, 0, 1), 2, 'Value at 0,0,1 (append between)');
-  assert.equal(image2.getValue(3, 3, 1), 2, 'Value at 3,3,1 (append between)');
-  assert.equal(image2.getValue(0, 0, 2), 1, 'Value at 0,0,2 (append between)');
-  assert.equal(image2.getValue(3, 3, 2), 1, 'Value at 3,3,2 (append between)');
-  // test its positions
-  var sliceOrigins2 = [];
-  sliceOrigins2[0] = new dwv.math.Point3D(0, 0, 0);
-  sliceOrigins2[1] = new dwv.math.Point3D(0, 0, 0.4);
-  sliceOrigins2[2] = new dwv.math.Point3D(0, 0, 1);
-  assert.deepEqual(
-    imgGeometry2.getOrigins(),
-    sliceOrigins2,
-    'Slice positions (append between)');
-});
-
-/**
- * Tests for {@link dwv.image.Image} convolute2D.
- *
- * @function module:tests/image~convolute2D
- */
-QUnit.test('Test Image convolute2D.', function (assert) {
-  // create a simple image
-  var size0 = 3;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
-  // id convolution
-  var weights0 = [0, 0, 0, 0, 1, 0, 0, 0, 0];
-  var resImage0 = image0.convolute2D(weights0);
-  var testContent0 = true;
-  for (i = 0; i < size0 * size0; ++i) {
-    if (image0.getValueAtOffset(i, 0) !== resImage0.getValueAtOffset(i, 0)) {
-      testContent0 = false;
-      break;
+    // create a simple image
+    const size0 = 4;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
     }
-  }
-  assert.equal(testContent0, true, 'convolute2D id');
-  // blur convolution
-  var weights1 = [1, 1, 1, 1, 1, 1, 1, 1, 1];
-  var resImage1 = image0.convolute2D(weights1);
-  var theoResImage1 = [12, 18, 24, 30, 36, 42, 48, 54, 60];
-  var testContent1 = true;
-  for (i = 0; i < size0 * size0; ++i) {
-    if (theoResImage1[i] !== resImage1.getValueAtOffset(i, 0)) {
-      testContent1 = false;
-      break;
+    const image0 = new Image(imgGeometry0, buffer0);
+    // test its geometry
+    assert.equal(image0.getGeometry(), imgGeometry0, 'Image geometry');
+    // test its values
+    const rsi0 = new RescaleSlopeAndIntercept(1, 0);
+    const res0 = compareImageAndBuffer(image0, imgSize0, buffer0, rsi0);
+    assert.deepEqual(
+      res0.valuesStats,
+      zeroStats,
+      'Values should be equal');
+    assert.deepEqual(
+      res0.rescaledStats,
+      zeroStats,
+      'Rescaled values should be equal');
+    // outside value
+    assert.equal(isNaN(image0.getValue(4, 3, 0)), true,
+      'Value outside is NaN');
+    assert.equal(isNaN(image0.getValue(5, 0, 0)), true,
+      'Value at 5,0,0 is NaN');
+    // check range
+    const theoRange0 = {min: 0, max: (size0 * size0) - 1};
+    const imgRange00 = image0.getDataRange();
+    assert.equal(imgRange00.max, theoRange0.max, 'Range max');
+    assert.equal(imgRange00.min, theoRange0.min, 'Range min');
+    const imgRange01 = image0.getRescaledDataRange();
+    assert.equal(imgRange01.max, theoRange0.max, 'Rescaled range max');
+    assert.equal(imgRange01.min, theoRange0.min, 'Rescaled range min');
+
+    // image with rescale
+    const image1 = new Image(imgGeometry0, buffer0);
+    const slope1 = 2;
+    const intercept1 = 10;
+    const rsi1 = new RescaleSlopeAndIntercept(slope1, intercept1);
+    image1.setRescaleSlopeAndIntercept(rsi1, new Index([0, 0, 0]));
+    // test its geometry
+    assert.equal(image1.getGeometry(), imgGeometry0, 'Image geometry');
+    // test its values
+    const res1 = compareImageAndBuffer(image1, imgSize0, buffer0, rsi1);
+    assert.deepEqual(
+      res1.valuesStats,
+      zeroStats,
+      'Values should be equal');
+    assert.deepEqual(
+      res1.rescaledStats,
+      zeroStats,
+      'Rescaled values should be equal');
+    // check range
+    const imgRange10 = image0.getDataRange();
+    assert.equal(imgRange10.max, theoRange0.max, 'Range max');
+    assert.equal(imgRange10.min, theoRange0.min, 'Range min');
+    const theoRange1 = {
+      min: theoRange0.min * slope1 + intercept1,
+      max: theoRange0.max * slope1 + intercept1
+    };
+    const imgRange11 = image1.getRescaledDataRange();
+    assert.equal(imgRange11.max, theoRange1.max, 'Rescaled range max');
+    assert.equal(imgRange11.min, theoRange1.min, 'Rescaled range min');
+  });
+
+  /**
+   * Tests for {@link Image} histogram.
+   *
+   * @function module:tests/image~imageHistogram
+   */
+  test('Image histogram', () => {
+    // create a simple image
+    const size0 = 4;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
     }
-  }
-  assert.equal(testContent1, true, 'convolute2D blur');
-});
+    const image0 = new Image(imgGeometry0, buffer0);
 
-/**
- * Tests for {@link dwv.image.Image} transform.
- *
- * @function module:tests/image~transform
- */
-QUnit.test('Test Image transform.', function (assert) {
-  // create a simple image
-  var size0 = 3;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
+    // histogram
+    const entries =
+      image0.getHistogram().getRescaledHistogram().getEntries();
+    assert.equal(entries.length, size0 * size0, 'histogram size');
+    let histoContentTest = true;
+    for (let j = 0; j < size0 * size0; ++j) {
+      if (entries[j].value !== j) {
+        histoContentTest = false;
+        break;
+      }
+      if (entries[j].count !== 1) {
+        histoContentTest = false;
+        break;
+      }
+    }
+    assert.equal(histoContentTest, true, 'histogram content');
+    assert.deepEqual(
+      image0.getDataRange(), {min: 0, max: 15}, 'data range');
 
-  // treshold function
-  var func0 = function (value) {
-    if (value < 3 || value > 5) {
-      return 0;
-    } else {
+    // image with rsi
+    const imgGeometry1 = new Geometry(
+      [imgOrigin0], new Size([2, 2, 1]), imgSpacing0);
+    const image1 = new Image(imgGeometry1, [-2, -1, 0, 1]);
+    image1.setRescaleSlopeAndIntercept(new RescaleSlopeAndIntercept(0.5, 10));
+    const entries1 =
+      image1.getHistogram().getRescaledHistogram().getEntries();
+    assert.deepEqual(entries1, [
+      {value: 9, count: 1},
+      {value: 9.5, count: 1},
+      {value: 10, count: 1},
+      {value: 10.5, count: 1}
+    ], 'rescaled histogram content');
+    assert.deepEqual(
+      image1.getRescaledDataRange(), {min: 9, max: 10.5},
+      'rescaled data range');
+  });
+
+  /**
+   * Tests for {@link Image} append.
+   *
+   * @function module:tests/image~imageAppendSlice
+   */
+  test('Image append slice', () => {
+    /**
+     * Compare two arrays of vectors.
+     *
+     * @param {Point3D[]} arr0 The first array.
+     * @param {Point3D[]} arr1 The second array.
+     * @returns {boolean} True if both arrays are equal.
+     */
+    function compareArrayOfVectors(arr0, arr1) {
+      return arr0.every(function (element, index) {
+        return element.equals(arr1[index]);
+      });
+    }
+
+    const size = 4;
+    const imgSize = new Size([size, size, 2]);
+    const imgSizeMinusOne = new Size([size, size, 1]);
+    const imgSpacing = new Spacing([1, 1, 1]);
+    const imgOrigin = new Point3D(0, 0, 0);
+
+    // slice to append
+    const sliceSize = new Size([size, size, 1]);
+    const sliceBuffer = new Int16Array(sliceSize.getTotalSize());
+    for (let i = 0; i < size * size; ++i) {
+      sliceBuffer[i] = 2;
+    }
+
+    // image buffer
+    const buffer = new Int16Array(imgSize.getTotalSize());
+    for (let j = 0; j < size * size; ++j) {
+      buffer[j] = 0;
+    }
+    for (let k = size * size; k < 2 * size * size; ++k) {
+      buffer[k] = 1;
+    }
+
+    // image 0
+    const imgGeometry0 = new Geometry(
+      [imgOrigin], imgSizeMinusOne, imgSpacing);
+    imgGeometry0.appendOrigin(new Point3D(0, 0, 1), 1);
+    const image0 = new Image(imgGeometry0, buffer, ['0']);
+    image0.setMeta({sliceCapacity: 3});
+    // append null
+    assert.throws(function () {
+      image0.appendSlice(null);
+    },
+    Error,
+    'Cannot append null slice'), 'append null slice';
+    // real slice
+    const sliceOrigin = new Point3D(0, 0, -1);
+    const sliceGeometry = new Geometry(
+      [sliceOrigin], sliceSize, imgSpacing);
+    const slice0 = new Image(sliceGeometry, sliceBuffer, ['1']);
+    slice0.setMeta({sliceCapacity: 3});
+    // append slice before
+    image0.appendSlice(slice0);
+    // test its values
+    assert.equal(image0.getValue(0, 0, 0), 2, 'Value at 0,0,0 (append before)');
+    assert.equal(image0.getValue(3, 3, 0), 2, 'Value at 3,3,0 (append before)');
+    assert.equal(image0.getValue(0, 0, 1), 0, 'Value at 0,0,1 (append before)');
+    assert.equal(image0.getValue(3, 3, 1), 0, 'Value at 3,3,1 (append before)');
+    assert.equal(image0.getValue(0, 0, 2), 1, 'Value at 0,0,2 (append before)');
+    assert.equal(image0.getValue(3, 3, 2), 1, 'Value at 3,3,2 (append before)');
+    // test its positions
+    const sliceOrigins0 = [];
+    sliceOrigins0[0] = new Point3D(0, 0, -1);
+    sliceOrigins0[1] = new Point3D(0, 0, 0);
+    sliceOrigins0[2] = new Point3D(0, 0, 1);
+    assert.ok(
+      compareArrayOfVectors(imgGeometry0.getOrigins(), sliceOrigins0),
+      'Slice positions (append before)');
+
+    // image 1
+    const imgGeometry1 = new Geometry(
+      [imgOrigin], imgSizeMinusOne, imgSpacing);
+    imgGeometry1.appendOrigin(new Point3D(0, 0, 1), 1);
+    const image1 = new Image(imgGeometry1, buffer, ['0']);
+    image1.setMeta({sliceCapacity: 3});
+    const sliceOrigin1 = new Point3D(0, 0, 2);
+    const sliceGeometry1 = new Geometry(
+      [sliceOrigin1], sliceSize, imgSpacing);
+    const slice1 = new Image(sliceGeometry1, sliceBuffer, ['1']);
+    slice1.setMeta({sliceCapacity: 3});
+    // append slice before
+    image1.appendSlice(slice1);
+    // test its values
+    assert.equal(image1.getValue(0, 0, 0), 0, 'Value at 0,0,0 (append after)');
+    assert.equal(image1.getValue(3, 3, 0), 0, 'Value at 3,3,0 (append after)');
+    assert.equal(image1.getValue(0, 0, 1), 1, 'Value at 0,0,1 (append after)');
+    assert.equal(image1.getValue(3, 3, 1), 1, 'Value at 3,3,1 (append after)');
+    assert.equal(image1.getValue(0, 0, 2), 2, 'Value at 0,0,2 (append after)');
+    assert.equal(image1.getValue(3, 3, 2), 2, 'Value at 3,3,2 (append after)');
+    // test its positions
+    const sliceOrigins1 = [];
+    sliceOrigins1[0] = new Point3D(0, 0, 0);
+    sliceOrigins1[1] = new Point3D(0, 0, 1);
+    sliceOrigins1[2] = new Point3D(0, 0, 2);
+    assert.ok(
+      compareArrayOfVectors(imgGeometry1.getOrigins(), sliceOrigins1),
+      'Slice positions (append after)');
+
+    // image 2
+    const imgGeometry2 = new Geometry(
+      [imgOrigin], imgSizeMinusOne, imgSpacing);
+    imgGeometry2.appendOrigin(new Point3D(0, 0, 1), 1);
+    const image2 = new Image(imgGeometry2, buffer, ['0']);
+    image2.setMeta({sliceCapacity: 3});
+    const sliceOrigin2 = new Point3D(0, 0, 0.4);
+    const sliceGeometry2 = new Geometry(
+      [sliceOrigin2], sliceSize, imgSpacing);
+    const slice2 = new Image(sliceGeometry2, sliceBuffer, ['1']);
+    slice2.setMeta({sliceCapacity: 3});
+    // append slice before
+    image2.appendSlice(slice2);
+    // test its values
+    assert.equal(image2.getValue(0, 0, 0), 0,
+      'Value at 0,0,0 (append between)');
+    assert.equal(image2.getValue(3, 3, 0), 0,
+      'Value at 3,3,0 (append between)');
+    assert.equal(image2.getValue(0, 0, 1), 2,
+      'Value at 0,0,1 (append between)');
+    assert.equal(image2.getValue(3, 3, 1), 2,
+      'Value at 3,3,1 (append between)');
+    assert.equal(image2.getValue(0, 0, 2), 1,
+      'Value at 0,0,2 (append between)');
+    assert.equal(image2.getValue(3, 3, 2), 1,
+      'Value at 3,3,2 (append between)');
+    // test its positions
+    const sliceOrigins2 = [];
+    sliceOrigins2[0] = new Point3D(0, 0, 0);
+    sliceOrigins2[1] = new Point3D(0, 0, 0.4);
+    sliceOrigins2[2] = new Point3D(0, 0, 1);
+    assert.ok(
+      compareArrayOfVectors(imgGeometry2.getOrigins(), sliceOrigins2),
+      'Slice positions (append between)');
+  });
+
+  /**
+   * Tests for {@link Image} append slice window presets merge.
+   *
+   * @function module:tests/image~imageAppendSliceWindowPresets
+   */
+  test('Image append slice window presets', () => {
+    const size = 2;
+    const sliceSize = new Size([size, size, 1]);
+    const sliceSpacing = new Spacing([1, 1, 1]);
+    const numberOfFiles = 4;
+
+    /**
+     * Create a single slice image with a 'Default' window preset.
+     *
+     * @param {number} z The slice z origin.
+     * @param {WindowLevel} wl The slice window level.
+     * @returns {Image} The created image.
+     */
+    function createSliceWithPreset(z, wl) {
+      const geometry = new Geometry(
+        [new Point3D(0, 0, z)], sliceSize, sliceSpacing);
+      const buffer = new Int16Array(size * size);
+      const image = new Image(geometry, buffer, [`${z}`]);
+      image.setMeta({
+        sliceCapacity: numberOfFiles,
+        windowPresets: {
+          Default: new WindowPreset('Default', [wl])
+        }
+      });
+      return image;
+    }
+
+    // slice window levels: same value for 0 and 1, diverging after
+    const wl0 = new WindowLevel(100, 200);
+    const wl1 = new WindowLevel(100, 200);
+    const wl2 = new WindowLevel(150, 250);
+    const wl3 = new WindowLevel(300, 400);
+    const wls = [wl0, wl1, wl2, wl3];
+
+    // base image (first loaded slice)
+    const image = createSliceWithPreset(0, wl0);
+
+    // append remaining slices, in order
+    for (let z = 1; z < numberOfFiles; ++z) {
+      image.appendSlice(createSliceWithPreset(z, wls[z]));
+    }
+
+    const preset = image.getMeta().windowPresets.Default;
+    assert.equal(preset.perslice, true,
+      'preset flagged as perslice after a diverging slice');
+    assert.equal(preset.wl.length, numberOfFiles,
+      'wl array has one entry per slice');
+    // slice 0 (base) and slices from the first detected divergence (2)
+    // onward have their own tracked window level; slice 1 was merged
+    // while still indistinguishable from slice 0
+    assert.ok(equalWl(preset.wl[0], wls[0]), 'slice 0 kept its own value');
+    assert.equal(preset.wl[1], wls[0],
+      'slice 1 merged before divergence was detected, set as wl[0]');
+    for (let z = 2; z < numberOfFiles; ++z) {
+      assert.ok(equalWl(preset.wl[z], wls[z]),
+        `slice ${z} kept its own window level`);
+    }
+  });
+
+  /**
+   * Tests for {@link Image} convolute2D.
+   *
+   * @function module:tests/image~imageConvolute2d
+   */
+  test('Image convolute2D', () => {
+    // create a simple image
+    const size0 = 3;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
+    }
+    const image0 = new Image(imgGeometry0, buffer0);
+    // id convolution
+    const weights0 = [0, 0, 0, 0, 1, 0, 0, 0, 0];
+    const resImage0 = image0.convolute2D(weights0);
+    let testContent0 = true;
+    for (let i = 0; i < size0 * size0; ++i) {
+      if (image0.getValueAtOffset(i, 0) !== resImage0.getValueAtOffset(i, 0)) {
+        testContent0 = false;
+        break;
+      }
+    }
+    assert.equal(testContent0, true, 'convolute2D id');
+    // blur convolution
+    const weights1 = [1, 1, 1, 1, 1, 1, 1, 1, 1];
+    const resImage1 = image0.convolute2D(weights1);
+    const theoResImage1 = [12, 18, 24, 30, 36, 42, 48, 54, 60];
+    let testContent1 = true;
+    for (let i = 0; i < size0 * size0; ++i) {
+      if (theoResImage1[i] !== resImage1.getValueAtOffset(i, 0)) {
+        testContent1 = false;
+        break;
+      }
+    }
+    assert.equal(testContent1, true, 'convolute2D blur');
+  });
+
+  /**
+   * Tests for {@link Image} transform.
+   *
+   * @function module:tests/image~imageTransform
+   */
+  test('Image transform', () => {
+    // create a simple image
+    const size0 = 3;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
+    }
+    let image0 = new Image(imgGeometry0, buffer0);
+
+    // treshold function
+    const func0 = function (value) {
+      if (value < 3 || value > 5) {
+        return 0;
+      }
       return value;
+    };
+    const resImage0 = image0.transform(func0);
+    const theoResImage0 = [0, 0, 0, 3, 4, 5, 0, 0, 0];
+    let testContent0 = true;
+    for (let i = 0; i < size0 * size0; ++i) {
+      if (theoResImage0[i] !== resImage0.getValueAtOffset(i, 0)) {
+        testContent0 = false;
+        break;
+      }
     }
-  };
-  var resImage0 = image0.transform(func0);
-  var theoResImage0 = [0, 0, 0, 3, 4, 5, 0, 0, 0];
-  var testContent0 = true;
-  for (i = 0; i < size0 * size0; ++i) {
-    if (theoResImage0[i] !== resImage0.getValueAtOffset(i, 0)) {
-      testContent0 = false;
-      break;
+    assert.equal(testContent0, true, 'transform threshold');
+
+    // new image
+    image0 = new Image(imgGeometry0, buffer0);
+
+    // multiply function
+    const func1 = function (value) {
+      return value * 2;
+    };
+    const resImage1 = image0.transform(func1);
+    const theoResImage1 = [0, 2, 4, 6, 8, 10, 12, 14, 16];
+    let testContent1 = true;
+    for (let i = 0; i < size0 * size0; ++i) {
+      if (theoResImage1[i] !== resImage1.getValueAtOffset(i, 0)) {
+        testContent1 = false;
+        break;
+      }
     }
-  }
-  assert.equal(testContent0, true, 'transform threshold');
+    assert.equal(testContent1, true, 'transform multiply');
+  });
 
-  // new image
-  image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
-
-  // multiply function
-  var func1 = function (value) {
-    return value * 2;
-  };
-  var resImage1 = image0.transform(func1);
-  var theoResImage1 = [0, 2, 4, 6, 8, 10, 12, 14, 16];
-  var testContent1 = true;
-  for (i = 0; i < size0 * size0; ++i) {
-    if (theoResImage1[i] !== resImage1.getValueAtOffset(i, 0)) {
-      testContent1 = false;
-      break;
+  /**
+   * Tests for {@link Image} compose.
+   *
+   * @function module:tests/image~imageCompose
+   */
+  test('Image compose', () => {
+    // create two simple images
+    const size0 = 3;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
     }
-  }
-  assert.equal(testContent1, true, 'transform multiply');
-});
-
-/**
- * Tests for {@link dwv.image.Image} compose.
- *
- * @function module:tests/image~compose
- */
-QUnit.test('Test Image compose.', function (assert) {
-  // create two simple images
-  var size0 = 3;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var image0 = new dwv.image.Image(imgGeometry0, [buffer0]);
-  var buffer1 = [];
-  for (i = 0; i < size0 * size0; ++i) {
-    buffer1[i] = i;
-  }
-  var image1 = new dwv.image.Image(imgGeometry0, [buffer1]);
-
-  // addition function
-  var func0 = function (a, b) {
-    return a + b;
-  };
-  var resImage0 = image0.compose(image1, func0);
-  var theoResImage0 = [0, 2, 4, 6, 8, 10, 12, 14, 16];
-  var testContent0 = true;
-  for (i = 0; i < size0 * size0; ++i) {
-    if (theoResImage0[i] !== resImage0.getValueAtOffset(i, 0)) {
-      testContent0 = false;
-      break;
+    const image0 = new Image(imgGeometry0, buffer0);
+    const buffer1 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer1[i] = i;
     }
-  }
-  assert.equal(testContent0, true, 'compose addition');
-});
+    const image1 = new Image(imgGeometry0, buffer1);
 
-/**
- * Tests for {@link dwv.image.ImageFactory}.
- *
- * @function module:tests/image~ImageFactory
- */
-QUnit.test('Test ImageFactory.', function (assert) {
-  var zeroStats = new dwv.math.SimpleStats(0, 0, 0, 0);
+    // addition function
+    const func0 = function (a, b) {
+      return a + b;
+    };
+    const resImage0 = image0.compose(image1, func0);
+    const theoResImage0 = [0, 2, 4, 6, 8, 10, 12, 14, 16];
+    let testContent0 = true;
+    for (let i = 0; i < size0 * size0; ++i) {
+      if (theoResImage0[i] !== resImage0.getValueAtOffset(i, 0)) {
+        testContent0 = false;
+        break;
+      }
+    }
+    assert.equal(testContent0, true, 'compose addition');
+  });
 
-  var size0 = 3;
-  var imgSize0 = new dwv.image.Size(size0, size0, 1);
-  var imgSpacing0 = new dwv.image.Spacing(1, 1, 1);
-  var imgOrigin0 = new dwv.math.Point3D(0, 0, 0);
-  var imgGeometry0 = new dwv.image.Geometry(imgOrigin0, imgSize0, imgSpacing0);
-  var buffer0 = [];
-  for (var i = 0; i < size0 * size0; ++i) {
-    buffer0[i] = i;
-  }
-  var rsi0 = new dwv.image.RescaleSlopeAndIntercept(1, 0);
+  /**
+   * Tests for {@link ImageFactory}.
+   *
+   * @function module:tests/image~imagefactory
+   */
+  test('ImageFactory', () => {
+    const zeroStats = {min: 0, max: 0, mean: 0, stdDev: 0};
 
-  var dicomElements0 = [];
-  // columns
-  dicomElements0.x00280011 = {value: imgSize0.getNumberOfColumns()};
-  // rows
-  dicomElements0.x00280010 = {value: imgSize0.getNumberOfRows()};
-  // spacing
-  dicomElements0.x00280030 = {
-    value: [imgSpacing0.getRowSpacing(), imgSpacing0.getColumnSpacing()]
-  };
-  // transfer syntax (explicit VR)
-  dicomElements0.x00020010 = {value: '1.2.840.10008.1.2.1'};
+    const size0 = 3;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    for (let i = 0; i < size0 * size0; ++i) {
+      buffer0[i] = i;
+    }
+    const rsi0 = new RescaleSlopeAndIntercept(1, 0);
 
-  // wrap the dicom elements
-  var wrappedDicomElements0 =
-    new dwv.dicom.DicomElementsWrapper(dicomElements0);
-  // create the image factory
-  var factory0 = new dwv.image.ImageFactory();
-  // create the image
-  var image0 = factory0.create(wrappedDicomElements0, [buffer0]);
+    const dicomElements0 = [];
+    // columns
+    dicomElements0['00280011'] = {value: [imgSize0.get(0)]};
+    // rows
+    dicomElements0['00280010'] = {value: [imgSize0.get(1)]};
+    // spacing
+    dicomElements0['00280030'] = {
+      value: [imgSpacing0.get(1), imgSpacing0.get(2)]
+    };
+    // transfer syntax (explicit VR)
+    dicomElements0['00020010'] = {value: ['1.2.840.10008.1.2.1']};
+    // SOP class UID
+    dicomElements0['00080016'] = {value: ['1.2.840.10008.5.1.4.1.1.4']};
+    // modality
+    dicomElements0['00080060'] = {value: ['MR']};
+    // SOP instance UID
+    dicomElements0['00080018'] = {value: ['1.2.840.34.56.78999654.234]']};
 
-  // test its geometry
-  assert.ok(image0.getGeometry().equals(imgGeometry0), 'Image geometry');
-  // test its values
-  var res0 = dwv.test.compareImageAndBuffer(image0, imgSize0, buffer0, rsi0);
-  assert.propEqual(
-    res0.valuesStats.asObject(),
-    zeroStats.asObject(),
-    'Values should be equal');
-  assert.propEqual(
-    res0.rescaledStats.asObject(),
-    zeroStats.asObject(),
-    'Rescaled values should be equal');
+    // create the image factory
+    const factory0 = new ImageFactory();
+    // create the image
+    const image0 = factory0.create(dicomElements0, buffer0);
+
+    // test its geometry
+    assert.ok(image0.getGeometry().equals(imgGeometry0), 'Image geometry');
+    // test its values
+    const res0 = compareImageAndBuffer(image0, imgSize0, buffer0, rsi0);
+    assert.deepEqual(
+      res0.valuesStats,
+      zeroStats,
+      'Values should be equal');
+    assert.deepEqual(
+      res0.rescaledStats,
+      zeroStats,
+      'Rescaled values should be equal');
+  });
+
+  /**
+   * Tests for {@link Image} hasValues and getOffsets.
+   *
+   * @function module:tests/image~hasvaluesGetoffsets
+   */
+  test('hasValues', () => {
+    const size0 = 3;
+    const imgSize0 = new Size([size0, size0, 1]);
+    const imgSpacing0 = new Spacing([1, 1, 1]);
+    const imgOrigin0 = new Point3D(0, 0, 0);
+    const imgGeometry0 = new Geometry([imgOrigin0], imgSize0, imgSpacing0);
+    const buffer0 = [];
+    buffer0[0] = 1;
+    for (let i0 = 1; i0 < 2 * size0; ++i0) {
+      buffer0[i0] = 0;
+    }
+    for (let i1 = 2 * size0; i1 < size0 * size0; ++i1) {
+      buffer0[i1] = 1;
+    }
+
+    // create the image
+    const image0 = new Image(imgGeometry0, buffer0);
+
+    // test hasValues
+    assert.ok(
+      arrayEquals(image0.hasValues([0]), [true]),
+      'Image has values 0'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([1]), [true]),
+      'Image has values 1'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([2]), [false]),
+      'Image has values 2'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([0, 1]), [true, true]),
+      'Image has values 0,1'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([0, 2]), [true, false]),
+      'Image has values 0,2'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([2, 0]), [false, true]),
+      'Image has values 2,0'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([0, 2, 1]), [true, false, true]),
+      'Image has values 0,2,1'
+    );
+    assert.ok(
+      arrayEquals(image0.hasValues([2, 1, 0]), [false, true, true]),
+      'Image has values 2,1,0'
+    );
+  });
+
+  /**
+   * Tests for {@link Image} clone.
+   *
+   * @function module:tests/image~clone
+   */
+  test('clone', () => {
+    const size00 = 3;
+    const imgSize00 = new Size([size00, size00, 1]);
+    const imgSpacing00 = new Spacing([1, 1, 1]);
+    const imgOrigin00 = new Point3D(0, 0, 0);
+    const imgGeometry00 = new Geometry([imgOrigin00], imgSize00, imgSpacing00);
+    const buffer00 = [];
+    buffer00[0] = 1;
+    for (let i0 = 1; i0 < 2 * size00; ++i0) {
+      buffer00[i0] = 0;
+    }
+    for (let i1 = 2 * size00; i1 < size00 * size00; ++i1) {
+      buffer00[i1] = 1;
+    }
+
+    // original image
+    const image0 = new Image(imgGeometry00, buffer00);
+    const modality0 = 'MR';
+    image0.getMeta().Modality = modality0;
+    // clone image
+    const image1 = image0.clone();
+
+    // retrieve geometries
+    const geometry0 = image0.getGeometry();
+    const geometry1 = image1.getGeometry();
+
+    // test size #0
+    assert.ok(geometry0.getSize().equals(imgSize00), 'Image size #0');
+    assert.ok(geometry1.getSize().equals(imgSize00), 'Clone image size #0');
+
+    // append origin, will increase size
+    geometry1.appendOrigin(new Point3D(0, 0, 1));
+    // new theoretical size
+    const theoSize1 = new Size([size00, size00, imgSize00.get(2) + 1]);
+
+    // test size #1
+    assert.ok(geometry0.getSize().equals(imgSize00), 'Image size #1');
+    assert.ok(geometry1.getSize().equals(theoSize1), 'Clone image size #1');
+
+    // test modality #0
+    assert.equal(image0.getMeta().Modality, modality0, 'Image modality #0');
+    assert.equal(image1.getMeta().Modality, modality0,
+      'Clone image modality #0');
+
+    // change cloned image modality
+    const modality1 = 'CT';
+    image1.getMeta().Modality = modality1;
+
+    // test modality #1
+    assert.equal(image0.getMeta().Modality, modality0, 'Image modality #1');
+    assert.equal(image1.getMeta().Modality, modality1,
+      'Clone image modality #1');
+  });
+
+
+  /**
+   * Tests for {@link Image#resample} of an image with volume ids.
+   *
+   * @function module:tests/image~imageResampleVolumeIds
+   */
+  test('Image resample keeps volume ids', async () => {
+    vi.stubGlobal('Worker', FakeResamplingWorker);
+    try {
+      // 2 slices, 2 volumes with ids 50 and 1000
+      const volumeIds = [50, 1000].map(value => ({id: {
+        source: 'DiffusionBValue',
+        value,
+        tagKey: '00189087',
+        unit: 'unit.smm2'
+      }}));
+      const geometry = new Geometry(
+        [new Point3D(0, 0, 0)], new Size([2, 2, 1]), new Spacing([1, 1, 1]),
+        undefined, volumeIds[0]);
+      geometry.appendOrigin(new Point3D(0, 0, 1), 1, 50);
+      geometry.appendFrame(new Point3D(0, 0, 0), volumeIds[1]);
+      geometry.appendOrigin(new Point3D(0, 0, 1), 1, 1000);
+      // volume values: 1 then 2
+      const buffer = new Uint8Array(16);
+      buffer.fill(1, 0, 8);
+      buffer.fill(2, 8);
+      const image = new Image(geometry, buffer);
+      image.setMeta({PixelRepresentation: 0});
+
+      // 90 degrees rotation around Z
+      /* eslint-disable @stylistic/js/array-element-newline */
+      const orientation = new Matrix33([
+        0, -1, 0,
+        1, 0, 0,
+        0, 0, 1
+      ]);
+      /* eslint-enable @stylistic/js/array-element-newline */
+      const complete = new Promise(resolve => {
+        image.addEventListener('imageresamplingcomplete', resolve);
+      });
+      image.resample(orientation, false);
+      await complete;
+
+      assert.ok(image.isResampled(), 'is resampled');
+      assert.ok(
+        image.getGeometry().getOrientation().equals(orientation),
+        'resampled orientation');
+      assert.deepEqual(
+        image.getGeometry().getVolumeIds(), volumeIds, 'volume ids');
+      const position = image.getGeometry().indexToWorld(
+        new Index([0, 0, 0, 1]));
+      assert.equal(position.get(3), 1000, 'volume 1 position');
+      for (let v = 0; v < 2; ++v) {
+        for (let k = 0; k < 2; ++k) {
+          assert.equal(image.getValue(0, 0, k, v), v + 1,
+            `value of slice ${k} of volume ${v}`);
+        }
+      }
+
+      // revert: back to the original geometry
+      image.revert();
+      assert.notOk(image.isResampled(), 'is not resampled');
+      assert.deepEqual(
+        image.getGeometry().getVolumeIds(), volumeIds, 'reverted volume ids');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /**
+   * Tests for {@link Image#getRescaledValuesAtPosition}.
+   *
+   * @function module:tests/image~getRescaledValuesAtPosition
+   */
+  test('Image getRescaledValuesAtPosition', () => {
+    // 2x2x2 image, 2 volumes with ids 50 and 1000
+    const volumeIds = [50, 1000].map(value => ({id: {
+      source: 'DiffusionBValue',
+      value,
+      tagKey: '00189087',
+      unit: 'unit.smm2'
+    }}));
+    const geometry = new Geometry(
+      [new Point3D(0, 0, 0)], new Size([2, 2, 1]), new Spacing([1, 1, 1]),
+      undefined, volumeIds[0]);
+    geometry.appendOrigin(new Point3D(0, 0, 1), 1, 50);
+    geometry.appendFrame(new Point3D(0, 0, 0), volumeIds[1]);
+    geometry.appendOrigin(new Point3D(0, 0, 1), 1, 1000);
+    // value: offset
+    const buffer = new Uint8Array(16);
+    for (let i = 0; i < buffer.length; ++i) {
+      buffer[i] = i;
+    }
+    const image = new Image(geometry, buffer);
+    image.setMeta({PixelRepresentation: 0, pixelUnit: 'HU'});
+    image.setRescaleSlopeAndIntercept(new RescaleSlopeAndIntercept(2, 1));
+
+    // (1, 0, 1): offset 5 in volume 0, 13 in volume 1
+    const res0 = image.getRescaledValuesAtPosition(new Point([1, 0, 1]));
+    assert.deepEqual(res0, [
+      {volumeId: volumeIds[0], pixValue: {value: 11, unit: 'HU'}},
+      {volumeId: volumeIds[1], pixValue: {value: 27, unit: 'HU'}}
+    ], 'values');
+    // a volume id in the position is ignored
+    const res1 = image.getRescaledValuesAtPosition(
+      new Point([1, 0, 1, 1000]));
+    assert.deepEqual(res1, res0, 'values with volume id');
+    // returned volume ids are copies
+    res0[0].volumeId.id = {value: 0};
+    assert.equal(geometry.getVolumeIds()[0].id.value, 50, 'volume id copy');
+
+    // out of bounds
+    const res2 = image.getRescaledValuesAtPosition(new Point([3, 0, 0]));
+    assert.deepEqual(res2, [], 'out of bounds');
+    const res3 = image.getRescaledValuesAtPosition(new Point([0, 0, 5]));
+    assert.deepEqual(res3, [], 'out of bounds z');
+
+    // 3D image: one value, volume index as id, no unit
+    const image3d = new Image(
+      new Geometry(
+        [new Point3D(0, 0, 0)], new Size([2, 2, 1]), new Spacing([1, 1, 1])),
+      new Uint8Array([1, 2, 3, 4]));
+    image3d.setMeta({PixelRepresentation: 0});
+    const res4 = image3d.getRescaledValuesAtPosition(new Point([0, 1, 0]));
+    assert.deepEqual(res4, [
+      {volumeId: {id: {value: 0}}, pixValue: {value: 3, unit: undefined}}
+    ], '3d values');
+
+    // frames without volume ids: volume index as id
+    const frames = new Image(
+      new Geometry(
+        [new Point3D(0, 0, 0)], new Size([1, 1, 1]), new Spacing([1, 1, 1]),
+        undefined, {id: {value: 0}}),
+      new Uint8Array([3]));
+    frames.setMeta({PixelRepresentation: 0, sliceCapacity: 2});
+    frames.appendFrameBuffer(new Uint8Array([7]), 1);
+    const res5 = frames.getRescaledValuesAtPosition(new Point([0, 0, 0]));
+    assert.deepEqual(res5, [
+      {volumeId: {id: {value: 0}}, pixValue: {value: 3, unit: undefined}},
+      {volumeId: {id: {value: 1}}, pixValue: {value: 7, unit: undefined}}
+    ], 'frame values');
+
+    // volume ids not matching the number of volumes: volume index as id
+    image.getGeometry().setVolumeIds([volumeIds[0]]);
+    const res6 = image.getRescaledValuesAtPosition(new Point([1, 0, 1]));
+    assert.deepEqual(res6, [
+      {volumeId: {id: {value: 0}}, pixValue: {value: 11, unit: 'HU'}},
+      {volumeId: {id: {value: 1}}, pixValue: {value: 27, unit: 'HU'}}
+    ], 'mismatched volume ids');
+
+    // more than one component: no values
+    const rgb = new Image(
+      new Geometry(
+        [new Point3D(0, 0, 0)], new Size([1, 1, 1]), new Spacing([1, 1, 1])),
+      new Uint8Array([1, 2, 3]));
+    rgb.setMeta({PixelRepresentation: 0});
+    const res7 = rgb.getRescaledValuesAtPosition(new Point([0, 0, 0]));
+    assert.deepEqual(res7, [], 'rgb');
+  });
+
 });
